@@ -12,6 +12,7 @@
     "start": "NODE_ENV=production node server/index.js"
   },
   "dependencies": {
+    "dotenv": "^18.0.10",
     "express": "^4.22.3",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
