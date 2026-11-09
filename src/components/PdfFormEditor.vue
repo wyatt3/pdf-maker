@@ -1,0 +1,690 @@
+<script setup>
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import * as pdfjsLib from 'pdfjs-dist'
+import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import { project, removeField } from '../composables/useProject.js'
+import { generatePdf, downloadPdf } from '../api.js'
+import { round } from '../utils/units.js'
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
+
+const props = defineProps({ pdfBytes: { type: Object, default: null } })
+const emit = defineEmits(['back', 'regenerate'])
+
+const stageRef = ref(null)
+const pageRef = ref(null)
+const canvasRef = ref(null)
+
+const pageWidthPt = ref(0)
+const pageHeightPt = ref(0)
+const viewScale = ref(1)
+
+const selectedId = ref(null)
+const pendingType = ref(null)
+const busy = ref(false)
+const error = ref('')
+
+let pdfDoc = null
+let pdfPage = null
+let renderTask = null
+let resizeObserver = null
+let resizeTimer = null
+
+const displayWidth = computed(() => pageWidthPt.value * viewScale.value)
+const displayHeight = computed(() => pageHeightPt.value * viewScale.value)
+
+const pageStyle = computed(() => ({
+  width: `${displayWidth.value}px`,
+  height: `${displayHeight.value}px`,
+  cursor: pendingType.value ? 'crosshair' : 'default'
+}))
+
+const selectedField = computed(
+  () => project.fields.find((field) => field.id === selectedId.value) ?? null
+)
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max)
+}
+
+function fieldStyle(field) {
+  const scale = viewScale.value
+  return {
+    left: `${field.x * scale}px`,
+    top: `${(pageHeightPt.value - field.y - field.h) * scale}px`,
+    width: `${field.w * scale}px`,
+    height: `${field.h * scale}px`
+  }
+}
+
+function computeScale() {
+  const el = stageRef.value
+  if (!el || !pageWidthPt.value) return
+  const padding = 72
+  const availableWidth = el.clientWidth - padding
+  const availableHeight = el.clientHeight - padding
+  if (availableWidth <= 0 || availableHeight <= 0) return
+  viewScale.value = Math.min(
+    availableWidth / pageWidthPt.value,
+    availableHeight / pageHeightPt.value,
+    2
+  )
+}
+
+async function renderCanvas() {
+  if (!pdfPage || !canvasRef.value) return
+  if (renderTask) {
+    try {
+      renderTask.cancel()
+    } catch {
+      // ignore
+    }
+    renderTask = null
+  }
+
+  const viewport = pdfPage.getViewport({ scale: viewScale.value })
+  const canvas = canvasRef.value
+  const dpr = window.devicePixelRatio || 1
+
+  canvas.width = Math.floor(viewport.width * dpr)
+  canvas.height = Math.floor(viewport.height * dpr)
+  canvas.style.width = `${viewport.width}px`
+  canvas.style.height = `${viewport.height}px`
+
+  const task = pdfPage.render({
+    canvasContext: canvas.getContext('2d'),
+    viewport,
+    transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null
+  })
+  renderTask = task
+
+  try {
+    await task.promise
+  } catch (err) {
+    if (err?.name !== 'RenderingCancelledException') {
+      console.warn('PDF render failed:', err)
+    }
+  } finally {
+    if (renderTask === task) renderTask = null
+  }
+}
+
+async function loadDocument() {
+  if (!props.pdfBytes) return
+  error.value = ''
+  try {
+    pdfDoc = await pdfjsLib.getDocument({ data: props.pdfBytes.slice() }).promise
+    pdfPage = await pdfDoc.getPage(1)
+    const viewport = pdfPage.getViewport({ scale: 1 })
+    pageWidthPt.value = viewport.width
+    pageHeightPt.value = viewport.height
+    computeScale()
+    await nextTick()
+    await renderCanvas()
+  } catch (err) {
+    error.value = err?.message || 'Could not load the generated PDF'
+  }
+}
+
+function scheduleRerender() {
+  clearTimeout(resizeTimer)
+  resizeTimer = setTimeout(async () => {
+    if (!pdfPage) return
+    computeScale()
+    await renderCanvas()
+  }, 120)
+}
+
+onMounted(async () => {
+  await nextTick()
+  await loadDocument()
+  resizeObserver = new ResizeObserver(scheduleRerender)
+  if (stageRef.value) resizeObserver.observe(stageRef.value)
+  window.addEventListener('keydown', onKeydown)
+})
+
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect()
+  clearTimeout(resizeTimer)
+  window.removeEventListener('keydown', onKeydown)
+  if (renderTask) {
+    try {
+      renderTask.cancel()
+    } catch {
+      // ignore
+    }
+  }
+})
+
+watch(
+  () => props.pdfBytes,
+  async () => {
+    pdfDoc = null
+    pdfPage = null
+    await loadDocument()
+  }
+)
+
+function togglePending(type) {
+  pendingType.value = pendingType.value === type ? null : type
+}
+
+function onPageClick(event) {
+  if (!pendingType.value) {
+    selectedId.value = null
+    return
+  }
+
+  const rect = pageRef.value.getBoundingClientRect()
+  const cssX = event.clientX - rect.left
+  const cssY = event.clientY - rect.top
+  const scale = viewScale.value
+
+  const isCheckbox = pendingType.value === 'checkbox'
+  const width = isCheckbox ? 14 : 160
+  const height = isCheckbox ? 14 : 20
+
+  const x = clamp(cssX / scale, 0, pageWidthPt.value - width)
+  const y = clamp(pageHeightPt.value - cssY / scale - height, 0, pageHeightPt.value - height)
+
+  const count = project.fields.filter((field) => field.type === pendingType.value).length + 1
+
+  const field = {
+    id: crypto.randomUUID(),
+    type: pendingType.value,
+    page: 0,
+    x: round(x),
+    y: round(y),
+    w: width,
+    h: height,
+    name: `${pendingType.value}_${count}`,
+    defaultValue: '',
+    checked: false,
+    required: false,
+    fontSize: 10,
+    multiline: false,
+    border: true,
+    tooltip: ''
+  }
+
+  project.fields.push(field)
+  selectedId.value = field.id
+  pendingType.value = null
+}
+
+function onFieldPointerDown(event, field) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  selectedId.value = field.id
+
+  const startX = event.clientX
+  const startY = event.clientY
+  const originX = field.x
+  const originY = field.y
+  const scale = viewScale.value
+
+  const onMove = (moveEvent) => {
+    const dx = (moveEvent.clientX - startX) / scale
+    const dy = (moveEvent.clientY - startY) / scale
+    field.x = round(clamp(originX + dx, 0, pageWidthPt.value - field.w))
+    field.y = round(clamp(originY - dy, 0, pageHeightPt.value - field.h))
+  }
+
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+  }
+
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+}
+
+function onResizePointerDown(event, field) {
+  if (event.button !== 0) return
+  event.preventDefault()
+  event.stopPropagation()
+  selectedId.value = field.id
+
+  const startX = event.clientX
+  const startY = event.clientY
+  const originW = field.w
+  const originH = field.h
+  const scale = viewScale.value
+
+  const onMove = (moveEvent) => {
+    const dw = (moveEvent.clientX - startX) / scale
+    const dh = (moveEvent.clientY - startY) / scale
+    field.w = round(clamp(originW + dw, 8, pageWidthPt.value - field.x))
+    field.h = round(clamp(originH + dh, 8, pageHeightPt.value - field.y))
+  }
+
+  const onUp = () => {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', onUp)
+  }
+
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', onUp)
+}
+
+function onKeydown(event) {
+  if (event.key !== 'Delete' && event.key !== 'Backspace') return
+  if (!selectedId.value) return
+  const tag = document.activeElement?.tagName
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+  event.preventDefault()
+  removeSelected()
+}
+
+function removeSelected() {
+  if (!selectedId.value) return
+  removeField(selectedId.value)
+  selectedId.value = null
+}
+
+async function onExport() {
+  busy.value = true
+  error.value = ''
+  try {
+    const fields = project.fields.map((field) => ({ ...field }))
+    const bytes = await generatePdf({
+      html: project.html,
+      width: Number(project.width),
+      height: Number(project.height),
+      unit: project.unit,
+      fields
+    })
+    downloadPdf(bytes, 'form.pdf')
+  } catch (err) {
+    error.value = err?.message || 'Export failed'
+  } finally {
+    busy.value = false
+  }
+}
+</script>
+
+<template>
+  <section class="form-editor">
+    <header class="editor-bar">
+      <button class="btn btn-ghost" @click="emit('back')">← Design</button>
+
+      <div class="tool-group">
+        <button
+          class="btn"
+          :class="{ 'is-active': pendingType === 'text' }"
+          @click="togglePending('text')"
+        >
+          + Text field
+        </button>
+        <button
+          class="btn"
+          :class="{ 'is-active': pendingType === 'checkbox' }"
+          @click="togglePending('checkbox')"
+        >
+          + Checkbox
+        </button>
+      </div>
+
+      <span v-if="pendingType" class="place-hint">
+        Click the page to place a {{ pendingType === 'checkbox' ? 'checkbox' : 'text field' }}
+      </span>
+      <span v-else class="place-hint">{{ project.fields.length }} field(s) placed</span>
+
+      <div class="spacer"></div>
+
+      <span v-if="error" class="error-text">{{ error }}</span>
+      <button class="btn btn-ghost" :disabled="busy" @click="emit('regenerate')">
+        Regenerate
+      </button>
+      <button class="btn btn-primary" :disabled="busy" @click="onExport">
+        <span v-if="busy" class="spinner"></span>
+        <span>{{ busy ? 'Exporting…' : 'Export PDF' }}</span>
+      </button>
+    </header>
+
+    <div class="editor-body">
+      <div ref="stageRef" class="stage">
+        <div ref="pageRef" class="page" :style="pageStyle" @click="onPageClick">
+          <canvas ref="canvasRef" class="pdf-canvas"></canvas>
+          <div class="overlay">
+            <div
+              v-for="field in project.fields"
+              :key="field.id"
+              class="field-box"
+              :class="{
+                selected: field.id === selectedId,
+                'is-checkbox': field.type === 'checkbox'
+              }"
+              :style="fieldStyle(field)"
+              @pointerdown.stop="onFieldPointerDown($event, field)"
+              @click.stop="selectedId = field.id"
+            >
+              <span class="field-tag">{{ field.name }}</span>
+              <span
+                class="resize-handle"
+                @pointerdown.stop="onResizePointerDown($event, field)"
+              ></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="props">
+        <div class="props-head">Field settings</div>
+
+        <div v-if="selectedField" class="props-body">
+          <div class="prop">
+            <span class="field-label">Type</span>
+            <span class="type-pill">
+              {{ selectedField.type === 'checkbox' ? 'Checkbox' : 'Text field' }}
+            </span>
+          </div>
+
+          <div class="prop">
+            <label class="field-label">Field name</label>
+            <input v-model="selectedField.name" class="input" />
+          </div>
+
+          <template v-if="selectedField.type === 'text'">
+            <div class="prop">
+              <label class="field-label">Default value</label>
+              <input v-model="selectedField.defaultValue" class="input" />
+            </div>
+
+            <div class="prop-row">
+              <div class="prop">
+                <label class="field-label">Font size</label>
+                <input
+                  v-model.number="selectedField.fontSize"
+                  class="input"
+                  type="number"
+                  min="4"
+                  max="48"
+                />
+              </div>
+              <label class="check">
+                <input v-model="selectedField.multiline" type="checkbox" /> Multiline
+              </label>
+            </div>
+
+            <label class="check">
+              <input v-model="selectedField.border" type="checkbox" /> Show border
+            </label>
+          </template>
+
+          <template v-else>
+            <label class="check">
+              <input v-model="selectedField.checked" type="checkbox" /> Checked by default
+            </label>
+          </template>
+
+          <label class="check">
+            <input v-model="selectedField.required" type="checkbox" /> Required
+          </label>
+
+          <div class="prop">
+            <label class="field-label">Tooltip</label>
+            <input v-model="selectedField.tooltip" class="input" />
+          </div>
+
+          <div class="prop-actions">
+            <span class="coords">
+              x {{ Math.round(selectedField.x) }} · y {{ Math.round(selectedField.y) }} pt
+            </span>
+            <button class="btn btn-danger" @click="removeSelected">Delete field</button>
+          </div>
+        </div>
+
+        <div v-else class="props-empty">
+          <p>Select a field to edit it, or add one from the toolbar.</p>
+          <p class="muted">
+            Drag to move, use the corner handle to resize, and press Delete to remove.
+          </p>
+        </div>
+      </aside>
+    </div>
+  </section>
+</template>
+
+<style scoped>
+.form-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.editor-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.tool-group {
+  display: flex;
+  gap: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
+.place-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.editor-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 1fr 300px;
+}
+
+.stage {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 36px;
+  background: repeating-conic-gradient(#e9eef5 0% 25%, #f1f5f9 0% 50%) 50% / 24px 24px;
+}
+
+.page {
+  position: relative;
+  flex: none;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12), 0 18px 44px rgba(15, 23, 42, 0.16);
+}
+
+.pdf-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.field-box {
+  position: absolute;
+  pointer-events: auto;
+  border: 1px dashed rgba(37, 99, 235, 0.75);
+  background: rgba(37, 99, 235, 0.08);
+  border-radius: 2px;
+  cursor: move;
+  user-select: none;
+}
+
+.field-box.is-checkbox {
+  border-color: rgba(124, 58, 237, 0.8);
+  background: rgba(124, 58, 237, 0.12);
+}
+
+.field-box.selected {
+  border-style: solid;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  background: rgba(37, 99, 235, 0.14);
+}
+
+.field-box.is-checkbox.selected {
+  border-color: #7c3aed;
+  box-shadow: 0 0 0 1px #7c3aed;
+}
+
+.field-tag {
+  position: absolute;
+  top: -17px;
+  left: -1px;
+  padding: 1px 5px;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 600;
+  white-space: nowrap;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.field-box:hover .field-tag,
+.field-box.selected .field-tag {
+  opacity: 1;
+}
+
+.field-box.is-checkbox .field-tag {
+  background: #7c3aed;
+}
+
+.resize-handle {
+  position: absolute;
+  right: -5px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  cursor: nwse-resize;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.field-box.selected .resize-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.props {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+}
+
+.props-head {
+  padding: 12px 18px;
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.props-body {
+  padding: 16px 18px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.props-empty {
+  padding: 18px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.props-empty .muted {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.prop {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.prop-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.type-pill {
+  align-self: flex-start;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.check input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+}
+
+.prop-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.coords {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .editor-body {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr auto;
+  }
+  .props {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    max-height: 40vh;
+  }
+}
+</style>
