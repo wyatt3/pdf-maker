@@ -19,6 +19,9 @@ const pageWidthPt = ref(0)
 const pageHeightPt = ref(0)
 const viewScale = ref(1)
 
+const currentPageIndex = ref(0)
+const numPages = ref(0)
+
 const selectedId = ref(null)
 const pendingType = ref(null)
 const busy = ref(false)
@@ -27,6 +30,7 @@ const error = ref('')
 let pdfDoc = null
 let pdfPage = null
 let renderTask = null
+let pageLoadToken = 0
 let resizeObserver = null
 let resizeTimer = null
 
@@ -38,6 +42,14 @@ const pageStyle = computed(() => ({
   height: `${displayHeight.value}px`,
   cursor: pendingType.value ? 'crosshair' : 'default'
 }))
+
+const currentPage = computed(() => project.pages[currentPageIndex.value] ?? null)
+
+const currentFields = computed(() => {
+  const pageId = currentPage.value?.id
+  if (!pageId) return []
+  return project.fields.filter((field) => field.pageId === pageId)
+})
 
 const selectedField = computed(
   () => project.fields.find((field) => field.id === selectedId.value) ?? null
@@ -109,21 +121,50 @@ async function renderCanvas() {
   }
 }
 
+async function loadPage(index) {
+  if (!pdfDoc || !numPages.value) return
+
+  const target = clamp(index, 0, numPages.value - 1)
+  const token = ++pageLoadToken
+  currentPageIndex.value = target
+
+  try {
+    const page = await pdfDoc.getPage(target + 1)
+    if (token !== pageLoadToken) return
+
+    pdfPage = page
+    const viewport = page.getViewport({ scale: 1 })
+    pageWidthPt.value = viewport.width
+    pageHeightPt.value = viewport.height
+    computeScale()
+    await nextTick()
+    if (token !== pageLoadToken) return
+    await renderCanvas()
+  } catch (err) {
+    if (token === pageLoadToken) {
+      error.value = err?.message || 'Could not load this page'
+    }
+  }
+}
+
 async function loadDocument() {
   if (!props.pdfBytes) return
   error.value = ''
   try {
     pdfDoc = await pdfjsLib.getDocument({ data: props.pdfBytes.slice() }).promise
-    pdfPage = await pdfDoc.getPage(1)
-    const viewport = pdfPage.getViewport({ scale: 1 })
-    pageWidthPt.value = viewport.width
-    pageHeightPt.value = viewport.height
-    computeScale()
-    await nextTick()
-    await renderCanvas()
+    numPages.value = pdfDoc.numPages
+    const target = clamp(currentPageIndex.value, 0, Math.max(0, numPages.value - 1))
+    await loadPage(target)
   } catch (err) {
     error.value = err?.message || 'Could not load the generated PDF'
   }
+}
+
+async function goToPage(index) {
+  if (index === currentPageIndex.value) return
+  selectedId.value = null
+  pendingType.value = null
+  await loadPage(index)
 }
 
 function scheduleRerender() {
@@ -159,6 +200,7 @@ onBeforeUnmount(() => {
 watch(
   () => props.pdfBytes,
   async () => {
+    pageLoadToken++
     pdfDoc = null
     pdfPage = null
     await loadDocument()
@@ -174,6 +216,9 @@ function onPageClick(event) {
     selectedId.value = null
     return
   }
+
+  const page = currentPage.value
+  if (!page) return
 
   const rect = pageRef.value.getBoundingClientRect()
   const cssX = event.clientX - rect.left
@@ -192,7 +237,7 @@ function onPageClick(event) {
   const field = {
     id: crypto.randomUUID(),
     type: pendingType.value,
-    page: 0,
+    pageId: page.id,
     x: round(x),
     y: round(y),
     w: width,
@@ -286,9 +331,12 @@ async function onExport() {
   busy.value = true
   error.value = ''
   try {
-    const fields = project.fields.map((field) => ({ ...field }))
+    const fields = project.fields.map((field) => {
+      const index = project.pages.findIndex((page) => page.id === field.pageId)
+      return { ...field, page: index === -1 ? 0 : index }
+    })
     const bytes = await generatePdf({
-      html: project.html,
+      pages: project.pages.map((page) => ({ html: page.html })),
       css: project.css,
       width: Number(project.width),
       height: Number(project.height),
@@ -326,10 +374,39 @@ async function onExport() {
         </button>
       </div>
 
+      <div v-if="numPages > 1" class="page-nav">
+        <button
+          class="btn btn-ghost page-arrow"
+          :disabled="currentPageIndex <= 0"
+          @click="goToPage(currentPageIndex - 1)"
+        >
+          ←
+        </button>
+        <button
+          v-for="n in numPages"
+          :key="n"
+          class="page-pill"
+          :class="{ active: n - 1 === currentPageIndex }"
+          @click="goToPage(n - 1)"
+        >
+          {{ n }}
+        </button>
+        <button
+          class="btn btn-ghost page-arrow"
+          :disabled="currentPageIndex >= numPages - 1"
+          @click="goToPage(currentPageIndex + 1)"
+        >
+          →
+        </button>
+      </div>
+
       <span v-if="pendingType" class="place-hint">
-        Click the page to place a {{ pendingType === 'checkbox' ? 'checkbox' : 'text field' }}
+        Click page {{ currentPageIndex + 1 }} to place a
+        {{ pendingType === 'checkbox' ? 'checkbox' : 'text field' }}
       </span>
-      <span v-else class="place-hint">{{ project.fields.length }} field(s) placed</span>
+      <span v-else class="place-hint">
+        {{ currentFields.length }} field(s) on this page · {{ project.fields.length }} total
+      </span>
 
       <div class="spacer"></div>
 
@@ -349,7 +426,7 @@ async function onExport() {
           <canvas ref="canvasRef" class="pdf-canvas"></canvas>
           <div class="overlay">
             <div
-              v-for="field in project.fields"
+              v-for="field in currentFields"
               :key="field.id"
               class="field-box"
               :class="{
@@ -472,6 +549,44 @@ async function onExport() {
   border-left: 1px solid var(--border);
 }
 
+.page-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+  overflow-x: auto;
+  max-width: 300px;
+}
+
+.page-arrow {
+  flex: none;
+  padding: 4px 8px;
+}
+
+.page-pill {
+  flex: none;
+  min-width: 26px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.page-pill:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.page-pill.active {
+  color: #fff;
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
 .place-hint {
   font-size: 12px;
   color: var(--muted);
@@ -491,9 +606,8 @@ async function onExport() {
 .stage {
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none;
   display: flex;
-  align-items: center;
-  justify-content: center;
   padding: 36px;
   background: repeating-conic-gradient(#e9eef5 0% 25%, #f1f5f9 0% 50%) 50% / 24px 24px;
 }
@@ -501,6 +615,7 @@ async function onExport() {
 .page {
   position: relative;
   flex: none;
+  margin: auto;
   background: #fff;
   box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12), 0 18px 44px rgba(15, 23, 42, 0.16);
 }

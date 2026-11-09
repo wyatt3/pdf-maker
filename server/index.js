@@ -17,11 +17,29 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/pdf', async (req, res) => {
   try {
-    const { html, css, width, height, unit, fields } = req.body ?? {}
+    const { pages, html, css, width, height, unit, fields } = req.body ?? {}
 
-    if (html != null && typeof html !== 'string') {
-      return res.status(400).json({ error: 'html must be a string' })
+    let pageList
+    if (pages != null) {
+      if (!Array.isArray(pages) || pages.length === 0) {
+        return res.status(400).json({ error: 'pages must be a non-empty array' })
+      }
+      if (pages.length > 100) {
+        return res.status(400).json({ error: 'pages must contain at most 100 entries' })
+      }
+      for (const page of pages) {
+        if (page == null || typeof page.html !== 'string') {
+          return res.status(400).json({ error: 'each page must have a string html' })
+        }
+      }
+      pageList = pages.map((page) => ({ html: page.html }))
+    } else {
+      if (html != null && typeof html !== 'string') {
+        return res.status(400).json({ error: 'html must be a string' })
+      }
+      pageList = [{ html: html ?? '' }]
     }
+
     if (css != null && typeof css !== 'string') {
       return res.status(400).json({ error: 'css must be a string' })
     }
@@ -35,7 +53,7 @@ app.post('/api/pdf', async (req, res) => {
       return res.status(400).json({ error: "unit must be 'in' or 'mm'" })
     }
 
-    let pdf = await renderPdf({ html, css, width: w, height: h, unit })
+    let pdf = await renderPdf({ pages: pageList, css, width: w, height: h, unit })
 
     if (Array.isArray(fields) && fields.length > 0) {
       pdf = await addFormFields(pdf, fields)

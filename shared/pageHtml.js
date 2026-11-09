@@ -21,7 +21,7 @@ export function toCssPx(value, unit) {
  * user's custom CSS, so their styles win. The page is forced to exactly one
  * fixed-size page; overflow is clipped so the PDF never paginates.
  */
-export function buildPageHtml(html, { css = '', cssWidth, cssHeight }) {
+export function buildPageHtml(html, { css = '', cssWidth, cssHeight, preview = false }) {
   const bootstrap = `
     <link rel="stylesheet" href="${BOOTSTRAP_CSS}" integrity="${BOOTSTRAP_CSS_INTEGRITY}" crossorigin="anonymous">
     <script src="${BOOTSTRAP_JS}" integrity="${BOOTSTRAP_JS_INTEGRITY}" crossorigin="anonymous" defer></script>`
@@ -48,7 +48,27 @@ ${String(css).replace(/<\/style/gi, '<\\/style')}
       }
     </style>`
 
-  const headContent = `${bootstrap}${base}${customCss}${constraints}`
+  const previewBridge = preview
+    ? `
+    <script>
+      (function () {
+        function forward(event) {
+          try {
+            var scroller = window.parent && window.parent.document.querySelector('[data-preview-scroll]')
+            if (!scroller) return
+            var before = scroller.scrollTop
+            scroller.scrollTop += event.deltaY
+            if (scroller.scrollTop !== before) event.preventDefault()
+          } catch (error) {
+            // cross-origin previews cannot reach the parent scroller
+          }
+        }
+        document.addEventListener('wheel', forward, { passive: false })
+      })()
+    <\/script>`
+    : ''
+
+  const headContent = `${bootstrap}${base}${customCss}${constraints}${previewBridge}`
 
   let doc = html
   if (!/<html[\s>]/i.test(doc)) {

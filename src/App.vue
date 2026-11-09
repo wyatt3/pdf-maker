@@ -13,7 +13,7 @@ const lastSignature = ref('')
 
 function currentSignature() {
   return JSON.stringify({
-    html: project.html,
+    pages: project.pages.map((page) => page.html),
     css: project.css,
     width: project.width,
     height: project.height,
@@ -26,7 +26,7 @@ async function handleGenerate() {
   generating.value = true
   try {
     pdfBytes.value = await generatePdf({
-      html: project.html,
+      pages: project.pages.map((page) => ({ html: page.html })),
       css: project.css,
       width: Number(project.width),
       height: Number(project.height),
@@ -72,7 +72,7 @@ function handleNew() {
           :class="{ active: step === 'design' }"
           @click="step = 'design'"
         >
-          <span class="step-num">1</span> Design page
+          <span class="step-num">1</span> Design pages
         </button>
         <span class="step-sep">→</span>
         <button

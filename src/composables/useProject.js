@@ -5,15 +5,28 @@ const STORAGE_KEY = 'pdf-maker:project:v1'
 export const DEFAULT_HTML = ''
 export const DEFAULT_CSS = ''
 
+function uid() {
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `page_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+  )
+}
+
+function createPage(html = DEFAULT_HTML) {
+  return { id: uid(), html }
+}
+
 function createDefaults() {
+  const page = createPage()
   return {
-    html: DEFAULT_HTML,
+    pages: [page],
     css: DEFAULT_CSS,
     unit: 'in',
     width: 8.5,
     height: 11,
     fields: [],
-    preset: 'Letter (8.5 × 11 in)'
+    preset: 'Letter (8.5 × 11 in)',
+    activePageId: page.id
   }
 }
 
@@ -26,6 +39,13 @@ function extractStyles(html) {
   return { html: cleaned, css: blocks.join('\n\n').trim() }
 }
 
+function normalizePage(page) {
+  return {
+    id: typeof page?.id === 'string' && page.id ? page.id : uid(),
+    html: typeof page?.html === 'string' ? page.html : DEFAULT_HTML
+  }
+}
+
 function loadProject() {
   const defaults = createDefaults()
   try {
@@ -33,22 +53,47 @@ function loadProject() {
     if (!raw) return defaults
 
     const saved = JSON.parse(raw)
-    let html = typeof saved.html === 'string' ? saved.html : defaults.html
     let css = typeof saved.css === 'string' ? saved.css : null
+    let pages
 
-    // Migrate older drafts that stored CSS inside the HTML <style> blocks.
-    if (css === null) {
-      const migrated = extractStyles(html)
-      html = migrated.html
-      css = migrated.css || defaults.css
+    if (Array.isArray(saved.pages) && saved.pages.length) {
+      pages = saved.pages.map(normalizePage)
+    } else {
+      let html = typeof saved.html === 'string' ? saved.html : DEFAULT_HTML
+      if (css === null) {
+        const migrated = extractStyles(html)
+        html = migrated.html
+        css = migrated.css || DEFAULT_CSS
+      }
+      pages = [normalizePage({ html })]
     }
 
+    if (css === null) css = DEFAULT_CSS
+
+    const savedFields = Array.isArray(saved.fields) ? saved.fields : []
+    const fields = savedFields.map((field) => {
+      const copy = { ...field }
+      if (!copy.pageId || !pages.some((page) => page.id === copy.pageId)) {
+        const index = Number(copy.page) || 0
+        copy.pageId = pages[index]?.id ?? pages[0].id
+      }
+      delete copy.page
+      return copy
+    })
+
+    const activePageId = pages.some((page) => page.id === saved.activePageId)
+      ? saved.activePageId
+      : pages[0].id
+
     return {
-      ...defaults,
-      ...saved,
-      html,
+      pages,
       css,
-      fields: Array.isArray(saved.fields) ? saved.fields : []
+      unit: saved.unit === 'mm' ? 'mm' : defaults.unit,
+      width: Number(saved.width) || defaults.width,
+      height: Number(saved.height) || defaults.height,
+      fields,
+      preset: typeof saved.preset === 'string' ? saved.preset : defaults.preset,
+      activePageId
     }
   } catch (error) {
     console.warn('Could not restore saved project:', error)
@@ -68,13 +113,14 @@ watch(
         localStorage.setItem(
           STORAGE_KEY,
           JSON.stringify({
-            html: project.html,
+            pages: project.pages,
             css: project.css,
             unit: project.unit,
             width: project.width,
             height: project.height,
             fields: project.fields,
-            preset: project.preset
+            preset: project.preset,
+            activePageId: project.activePageId
           })
         )
       } catch (error) {
@@ -96,4 +142,58 @@ export function addField(field) {
 
 export function removeField(id) {
   project.fields = project.fields.filter((field) => field.id !== id)
+}
+
+export function pageIndex(pageId) {
+  return project.pages.findIndex((page) => page.id === pageId)
+}
+
+export function addPage(html = DEFAULT_HTML) {
+  const page = createPage(html)
+  project.pages.push(page)
+  project.activePageId = page.id
+  return page
+}
+
+export function duplicatePage(pageId) {
+  const index = pageIndex(pageId)
+  if (index === -1) return null
+
+  const source = project.pages[index]
+  const page = createPage(source.html)
+  project.pages.splice(index + 1, 0, page)
+
+  const copies = project.fields
+    .filter((field) => field.pageId === source.id)
+    .map((field) => ({ ...field, id: uid(), pageId: page.id }))
+  project.fields.push(...copies)
+
+  project.activePageId = page.id
+  return page
+}
+
+export function removePage(pageId) {
+  if (project.pages.length <= 1) return false
+  const index = pageIndex(pageId)
+  if (index === -1) return false
+
+  project.pages.splice(index, 1)
+  project.fields = project.fields.filter((field) => field.pageId !== pageId)
+
+  if (project.activePageId === pageId) {
+    const next = project.pages[Math.min(index, project.pages.length - 1)]
+    project.activePageId = next.id
+  }
+  return true
+}
+
+export function movePage(pageId, direction) {
+  const index = pageIndex(pageId)
+  if (index === -1) return false
+  const target = index + direction
+  if (target < 0 || target >= project.pages.length) return false
+
+  const [page] = project.pages.splice(index, 1)
+  project.pages.splice(target, 0, page)
+  return true
 }
