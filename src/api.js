@@ -1,8 +1,8 @@
-export async function generatePdf({ html, width, height, unit, fields }) {
+export async function generatePdf({ html, css, width, height, unit, fields }) {
   const response = await fetch('/api/pdf', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ html, width, height, unit, fields })
+    body: JSON.stringify({ html, css, width, height, unit, fields })
   })
 
   if (!response.ok) {

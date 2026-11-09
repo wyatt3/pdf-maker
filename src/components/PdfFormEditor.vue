@@ -289,6 +289,7 @@ async function onExport() {
     const fields = project.fields.map((field) => ({ ...field }))
     const bytes = await generatePdf({
       html: project.html,
+      css: project.css,
       width: Number(project.width),
       height: Number(project.height),
       unit: project.unit,

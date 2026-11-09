@@ -14,6 +14,7 @@ const lastSignature = ref('')
 function currentSignature() {
   return JSON.stringify({
     html: project.html,
+    css: project.css,
     width: project.width,
     height: project.height,
     unit: project.unit
@@ -26,6 +27,7 @@ async function handleGenerate() {
   try {
     pdfBytes.value = await generatePdf({
       html: project.html,
+      css: project.css,
       width: Number(project.width),
       height: Number(project.height),
       unit: project.unit
@@ -61,11 +63,7 @@ function handleNew() {
   <div class="app">
     <header class="app-header">
       <div class="brand">
-        <div class="brand-mark">PDF</div>
-        <div>
-          <h1>Form Builder</h1>
-          <p>Design a page, then place fillable fields on the PDF.</p>
-        </div>
+        <h1>PDF Maker</h1>
       </div>
 
       <nav class="steps">
@@ -128,33 +126,13 @@ function handleNew() {
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
   margin-right: auto;
 }
 
-.brand-mark {
-  width: 38px;
-  height: 38px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #2563eb, #7c3aed);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  display: grid;
-  place-items: center;
-}
-
 .brand h1 {
-  font-size: 15px;
+  font-size: 16px;
   margin: 0;
   line-height: 1.2;
-}
-
-.brand p {
-  margin: 2px 0 0;
-  font-size: 12px;
-  color: var(--muted);
 }
 
 .steps {

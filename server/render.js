@@ -28,30 +28,14 @@ export async function closeBrowser() {
   }
 }
 
-export async function renderPdf({ html, width, height, unit }) {
+export async function renderPdf({ html = '', css = '', width, height, unit }) {
   const browser = await getBrowser()
   const page = await browser.newPage()
 
   try {
-    // The rendered HTML is authored locally, but scripts are not needed to
-    // produce the PDF and disabling them keeps rendering deterministic.
-    await page.setJavaScriptEnabled(false)
-
-    // CJIS-friendly default: never reach out to the public internet while
-    // rendering. Local and inline assets still work.
-    await page.setRequestInterception(true)
-    page.on('request', (request) => {
-      const url = request.url()
-      const allowed =
-        url.startsWith('data:') ||
-        url.startsWith('about:') ||
-        url.startsWith('file:') ||
-        url.startsWith('blob:') ||
-        url.startsWith('http://localhost') ||
-        url.startsWith('http://127.0.0.1')
-      if (allowed) request.continue()
-      else request.abort()
-    })
+    // Scripts and external assets are allowed. Wait for the page to settle
+    // before capturing so async resources have a chance to load.
+    await page.setJavaScriptEnabled(true)
 
     const cssWidth = Math.max(1, Math.round(toCssPx(width, unit)))
     const cssHeight = Math.max(1, Math.round(toCssPx(height, unit)))
@@ -62,12 +46,15 @@ export async function renderPdf({ html, width, height, unit }) {
       deviceScaleFactor: 1
     })
 
-    await page.setContent(buildPageHtml(html, { cssWidth, cssHeight }), {
+    await page.setContent(buildPageHtml(html, { css, cssWidth, cssHeight }), {
       waitUntil: 'load',
       timeout: 30000
     })
 
     await page.evaluate(() => document.fonts?.ready)
+
+    // Give async scripts a brief moment to finish painting before capture.
+    await new Promise((resolve) => setTimeout(resolve, 250))
 
     const pdf = await page.pdf({
       width: `${width}${unit}`,

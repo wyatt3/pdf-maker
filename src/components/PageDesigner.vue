@@ -10,12 +10,14 @@ defineEmits(['generate'])
 
 const stageRef = ref(null)
 const scale = ref(1)
+const activeTab = ref('html')
 
 const pageWidthPx = computed(() => Math.max(1, Math.round(toCssPx(project.width, project.unit))))
 const pageHeightPx = computed(() => Math.max(1, Math.round(toCssPx(project.height, project.unit))))
 
 const previewDoc = computed(() =>
   buildPageHtml(project.html, {
+    css: project.css,
     cssWidth: pageWidthPx.value,
     cssHeight: pageHeightPx.value
   })
@@ -60,7 +62,9 @@ function onEditorKeydown(event) {
   const el = event.target
   const start = el.selectionStart
   const end = el.selectionEnd
-  project.html = project.html.slice(0, start) + '  ' + project.html.slice(end)
+  const key = activeTab.value === 'css' ? 'css' : 'html'
+  const value = project[key]
+  project[key] = value.slice(0, start) + '  ' + value.slice(end)
   requestAnimationFrame(() => {
     el.selectionStart = el.selectionEnd = start + 2
   })
@@ -75,13 +79,36 @@ function onEditorKeydown(event) {
 
     <div class="panes">
       <div class="pane editor-pane">
-        <div class="pane-head">
-          <span>HTML &amp; CSS</span>
-          <span class="pane-hint">Rendered exactly at the page size</span>
+        <div class="editor-tabs">
+          <button
+            class="editor-tab"
+            :class="{ active: activeTab === 'html' }"
+            @click="activeTab = 'html'"
+          >
+            HTML
+          </button>
+          <button
+            class="editor-tab"
+            :class="{ active: activeTab === 'css' }"
+            @click="activeTab = 'css'"
+          >
+            CSS
+          </button>
+          <span class="pane-hint tab-hint">Bootstrap 5 loads automatically</span>
         </div>
         <textarea
+          v-show="activeTab === 'html'"
           v-model="project.html"
           class="html-editor"
+          placeholder="Write your HTML here…"
+          spellcheck="false"
+          @keydown="onEditorKeydown"
+        ></textarea>
+        <textarea
+          v-show="activeTab === 'css'"
+          v-model="project.css"
+          class="html-editor"
+          placeholder="Write your CSS here…"
           spellcheck="false"
           @keydown="onEditorKeydown"
         ></textarea>
@@ -105,7 +132,7 @@ function onEditorKeydown(event) {
               class="frame"
               :srcdoc="previewDoc"
               :style="frameStyle"
-              sandbox="allow-same-origin"
+              sandbox="allow-scripts allow-same-origin"
               scrolling="no"
               title="Page preview"
             ></iframe>
@@ -164,6 +191,39 @@ function onEditorKeydown(event) {
   color: var(--muted);
 }
 
+.editor-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.editor-tab {
+  padding: 11px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.editor-tab:hover {
+  color: var(--text);
+}
+
+.editor-tab.active {
+  color: var(--accent-hover);
+  border-bottom-color: var(--accent);
+}
+
+.tab-hint {
+  margin-left: auto;
+}
+
 .html-editor {
   flex: 1;
   min-height: 0;
@@ -178,6 +238,10 @@ function onEditorKeydown(event) {
   font-size: 13px;
   line-height: 1.6;
   tab-size: 2;
+}
+
+.html-editor::placeholder {
+  color: #64748b;
 }
 
 .editor-actions {

@@ -16,10 +16,13 @@ app.get('/api/health', (_req, res) => {
 
 app.post('/api/pdf', async (req, res) => {
   try {
-    const { html, width, height, unit, fields } = req.body ?? {}
+    const { html, css, width, height, unit, fields } = req.body ?? {}
 
-    if (typeof html !== 'string' || !html.trim()) {
-      return res.status(400).json({ error: 'html is required' })
+    if (html != null && typeof html !== 'string') {
+      return res.status(400).json({ error: 'html must be a string' })
+    }
+    if (css != null && typeof css !== 'string') {
+      return res.status(400).json({ error: 'css must be a string' })
     }
 
     const w = Number(width)
@@ -31,7 +34,7 @@ app.post('/api/pdf', async (req, res) => {
       return res.status(400).json({ error: "unit must be 'in' or 'mm'" })
     }
 
-    let pdf = await renderPdf({ html, width: w, height: h, unit })
+    let pdf = await renderPdf({ html, css, width: w, height: h, unit })
 
     if (Array.isArray(fields) && fields.length > 0) {
       pdf = await addFormFields(pdf, fields)
