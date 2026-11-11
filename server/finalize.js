@@ -25,7 +25,8 @@ function applyTooltip(field, tooltip) {
 
 /**
  * Add fillable AcroForm fields to an existing PDF.
- * Field coordinates are in PDF points with the origin at the bottom-left.
+ * Field coordinates are in PDF points with the origin at the top-left.
+ * They are converted to pdf-lib's bottom-left origin below.
  */
 export async function addFormFields(pdfBytes, fields) {
   const pdfDoc = await PDFDocument.load(pdfBytes)
@@ -53,10 +54,11 @@ export async function addFormFields(pdfBytes, fields) {
     const pageWidth = page.getWidth()
     const pageHeight = page.getHeight()
 
-    const x = clamp(Number(field.x) || 0, 0, pageWidth)
-    const y = clamp(Number(field.y) || 0, 0, pageHeight)
+    const x = clamp(Number(field.x) || 0, 0, Math.max(0, pageWidth - 4))
+    const top = clamp(Number(field.y) || 0, 0, Math.max(0, pageHeight - 4))
     const width = clamp(Number(field.w) || 120, 4, pageWidth - x)
-    const height = clamp(Number(field.h) || 18, 4, pageHeight - y)
+    const height = clamp(Number(field.h) || 18, 4, pageHeight - top)
+    const y = pageHeight - top - height
     const fallback =
       field.type === 'checkbox' ? `checkbox_${++checkboxIndex}` : `text_${++textIndex}`
     const name = uniqueName(field.name, fallback)

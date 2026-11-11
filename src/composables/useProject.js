@@ -4,7 +4,7 @@ import { PRESETS, round, toPdfPt } from '../utils/units.js'
 const STORAGE_KEY = 'pdf-maker:project:v1'
 
 export const PROJECT_FORMAT = 'pdf-maker-project'
-export const PROJECT_VERSION = 1
+export const PROJECT_VERSION = 2
 
 export const DEFAULT_HTML = ''
 export const DEFAULT_CSS = ''
@@ -54,7 +54,14 @@ function toFinite(value, fallback) {
   return Number.isFinite(number) ? number : fallback
 }
 
-function normalizeFields(savedFields, pages, pageWidthPt, pageHeightPt, fieldDefaults) {
+function normalizeFields(
+  savedFields,
+  pages,
+  pageWidthPt,
+  pageHeightPt,
+  fieldDefaults,
+  fieldOrigin
+) {
   const fields = []
   const seenIds = new Set()
   const seenNames = new Set()
@@ -86,7 +93,9 @@ function normalizeFields(savedFields, pages, pageWidthPt, pageHeightPt, fieldDef
     const w = round(clamp(toFinite(saved.w, defaultWidth), 4, pageWidthPt), 2)
     const h = round(clamp(toFinite(saved.h, defaultHeight), 4, pageHeightPt), 2)
     const x = round(clamp(toFinite(saved.x, 0), 0, Math.max(0, pageWidthPt - w)), 2)
-    const y = round(clamp(toFinite(saved.y, 0), 0, Math.max(0, pageHeightPt - h)), 2)
+    const rawY = toFinite(saved.y, 0)
+    const topY = fieldOrigin === 'bottom-left' ? pageHeightPt - rawY - h : rawY
+    const y = round(clamp(topY, 0, Math.max(0, pageHeightPt - h)), 2)
 
     const baseName =
       typeof saved.name === 'string' && saved.name.trim()
@@ -156,6 +165,7 @@ function createDefaults() {
     height: 11,
     fields: [],
     fieldDefaults: createFieldDefaults(),
+    fieldOrigin: 'top-left',
     preset: 'Letter (8.5 × 11 in)',
     activePageId: page.id
   }
@@ -177,7 +187,7 @@ function normalizePage(page) {
   }
 }
 
-function normalizeProject(saved) {
+function normalizeProject(saved, fieldOriginOverride) {
   const defaults = createDefaults()
   let css = typeof saved?.css === 'string' ? saved.css : null
   let pages
@@ -208,12 +218,15 @@ function normalizeProject(saved) {
   const fieldDefaults = normalizeFieldDefaults(saved?.fieldDefaults)
   const pageWidthPt = toPdfPt(width, unit)
   const pageHeightPt = toPdfPt(height, unit)
+  const fieldOrigin =
+    fieldOriginOverride ?? (saved?.fieldOrigin === 'top-left' ? 'top-left' : 'bottom-left')
   const fields = normalizeFields(
     Array.isArray(saved?.fields) ? saved.fields : [],
     pages,
     pageWidthPt,
     pageHeightPt,
-    fieldDefaults
+    fieldDefaults,
+    fieldOrigin
   )
 
   const activePageId = pages.some((page) => page.id === saved?.activePageId)
@@ -228,6 +241,7 @@ function normalizeProject(saved) {
     height,
     fields,
     fieldDefaults,
+    fieldOrigin: 'top-left',
     preset: normalizePreset(saved?.preset, unit, width, height),
     activePageId
   }
@@ -255,6 +269,7 @@ function serializeProject() {
     height: project.height,
     fields: project.fields,
     fieldDefaults: project.fieldDefaults,
+    fieldOrigin: 'top-left',
     preset: project.preset,
     activePageId: project.activePageId
   }
@@ -294,8 +309,11 @@ export function importProject(data) {
   if (data.format !== PROJECT_FORMAT) {
     throw new Error('That file is not a PDF Maker project.')
   }
-  if (data.version !== PROJECT_VERSION) {
+  if (data.version !== 1 && data.version !== PROJECT_VERSION) {
     throw new Error('That project file uses an unsupported version.')
+  }
+  if (data.version === PROJECT_VERSION && data.fieldOrigin !== 'top-left') {
+    throw new Error('That project file uses an unsupported coordinate system.')
   }
   if (!Array.isArray(data.pages) || data.pages.length === 0) {
     throw new Error('The project file has no pages.')
@@ -322,7 +340,7 @@ export function importProject(data) {
     throw new Error('The project file contains an invalid field.')
   }
 
-  const normalized = normalizeProject(data)
+  const normalized = normalizeProject(data, data.version === 1 ? 'bottom-left' : 'top-left')
   Object.assign(project, normalized)
   clearTimeout(saveTimer)
   saveProject()

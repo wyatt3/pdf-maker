@@ -74,7 +74,7 @@ function fieldStyle(field) {
   const scale = viewScale.value
   return {
     left: `${field.x * scale}px`,
-    top: `${(pageHeightPt.value - field.y - field.h) * scale}px`,
+    top: `${field.y * scale}px`,
     width: `${field.w * scale}px`,
     height: `${field.h * scale}px`
   }
@@ -319,7 +319,7 @@ function onPageClick(event) {
     : round(clamp(Number(defaults.height) || 20, 4, pageHeightPt.value))
 
   const x = clamp(cssX / scale, 0, pageWidthPt.value - width)
-  const y = clamp(pageHeightPt.value - cssY / scale - height, 0, pageHeightPt.value - height)
+  const y = clamp(cssY / scale, 0, pageHeightPt.value - height)
 
   const count = project.fields.filter((field) => field.type === pendingType.value).length + 1
 
@@ -397,7 +397,7 @@ function onFieldPointerDown(event, field) {
     const dx = (moveEvent.clientX - startX) / scale
     const dy = (moveEvent.clientY - startY) / scale
     field.x = round(clamp(originX + dx, 0, pageWidthPt.value - field.w))
-    field.y = round(clamp(originY - dy, 0, pageHeightPt.value - field.h))
+    field.y = round(clamp(originY + dy, 0, pageHeightPt.value - field.h))
   }
 
   const onUp = () => {
@@ -419,16 +419,13 @@ function onResizePointerDown(event, field) {
   const startY = event.clientY
   const originW = field.w
   const originH = field.h
-  const top = field.y + originH
   const scale = viewScale.value
 
   const onMove = (moveEvent) => {
     const dw = (moveEvent.clientX - startX) / scale
     const dh = (moveEvent.clientY - startY) / scale
     field.w = round(clamp(originW + dw, 8, pageWidthPt.value - field.x))
-    const nextH = round(clamp(originH + dh, 8, top))
-    field.h = nextH
-    field.y = round(top - nextH)
+    field.h = round(clamp(originH + dh, 8, pageHeightPt.value - field.y))
   }
 
   const onUp = () => {
@@ -467,24 +464,22 @@ function onKeydown(event) {
   const field = selectedField.value
 
   if (event.ctrlKey) {
-    const top = field.y + field.h
+    const maxH = pageHeightPt.value - field.y
     if (delta[0] === 1) {
       field.w = round(clamp(field.w + step, 8, pageWidthPt.value - field.x))
     } else if (delta[0] === -1) {
       field.w = round(clamp(field.w - step, 8, pageWidthPt.value - field.x))
     }
     if (delta[1] === -1) {
-      field.h = round(clamp(field.h + step, 8, top))
-      field.y = round(top - field.h)
+      field.h = round(clamp(field.h + step, 8, maxH))
     } else if (delta[1] === 1) {
-      field.h = round(clamp(field.h - step, 8, top))
-      field.y = round(top - field.h)
+      field.h = round(clamp(field.h - step, 8, maxH))
     }
     return
   }
 
   field.x = round(clamp(field.x + delta[0] * step, 0, pageWidthPt.value - field.w))
-  field.y = round(clamp(field.y + delta[1] * step, 0, pageHeightPt.value - field.h))
+  field.y = round(clamp(field.y - delta[1] * step, 0, pageHeightPt.value - field.h))
 }
 
 function removeSelected() {
@@ -711,7 +706,7 @@ async function onExport() {
 
           <div class="prop-actions">
             <span class="coords">
-              x {{ Math.round(selectedField.x) }} · y {{ Math.round(selectedField.y) }} pt
+              x {{ Math.round(selectedField.x) }} · y {{ Math.round(selectedField.y) }} pt from top-left
             </span>
             <button class="btn btn-danger" @click="removeSelected">Delete field</button>
           </div>
