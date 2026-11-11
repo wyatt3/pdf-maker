@@ -398,13 +398,51 @@ function onResizePointerDown(event, field) {
   window.addEventListener('pointerup', onUp)
 }
 
+const ARROW_DELTAS = {
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, 1],
+  ArrowDown: [0, -1]
+}
+
 function onKeydown(event) {
-  if (event.key !== 'Delete' && event.key !== 'Backspace') return
-  if (!selectedId.value) return
   const tag = document.activeElement?.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+
+  if (event.key === 'Delete' || event.key === 'Backspace') {
+    if (!selectedId.value) return
+    event.preventDefault()
+    removeSelected()
+    return
+  }
+
+  const delta = ARROW_DELTAS[event.key]
+  if (!delta || !selectedField.value) return
+  if (event.metaKey || event.altKey) return
+
   event.preventDefault()
-  removeSelected()
+  const step = event.shiftKey ? 10 : 1
+  const field = selectedField.value
+
+  if (event.ctrlKey) {
+    const top = field.y + field.h
+    if (delta[0] === 1) {
+      field.w = round(clamp(field.w + step, 8, pageWidthPt.value - field.x))
+    } else if (delta[0] === -1) {
+      field.w = round(clamp(field.w - step, 8, pageWidthPt.value - field.x))
+    }
+    if (delta[1] === -1) {
+      field.h = round(clamp(field.h + step, 8, top))
+      field.y = round(top - field.h)
+    } else if (delta[1] === 1) {
+      field.h = round(clamp(field.h - step, 8, top))
+      field.y = round(top - field.h)
+    }
+    return
+  }
+
+  field.x = round(clamp(field.x + delta[0] * step, 0, pageWidthPt.value - field.w))
+  field.y = round(clamp(field.y + delta[1] * step, 0, pageHeightPt.value - field.h))
 }
 
 function removeSelected() {
@@ -613,7 +651,7 @@ async function onExport() {
         <div v-else class="props-empty">
           <p>Select a field to edit it, or add one from the toolbar.</p>
           <p class="muted">
-            Drag to move, use the corner handle to resize, and press Delete to remove.
+            Drag to move, nudge with the arrow keys, Ctrl+arrow to resize (Shift for 10pt), or use the corner handle. Press Delete to remove.
           </p>
         </div>
       </aside>
