@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import DimensionControls from './DimensionControls.vue'
+import ZoomControls from './ZoomControls.vue'
 import {
   project,
   addPage,
@@ -286,28 +287,15 @@ function onMovePage(direction) {
       <div class="pane preview-pane">
         <div class="pane-head">
           <span>Live preview</span>
-          <div class="zoom-controls">
-            <button class="zoom-btn" title="Zoom out" @click="zoomOut">−</button>
-            <button class="zoom-level" title="Actual size (100%)" @click="actualSize">
-              {{ Math.round(scale * 100) }}%
-            </button>
-            <button class="zoom-btn" title="Zoom in" @click="zoomIn">+</button>
-            <span class="zoom-sep"></span>
-            <button
-              class="zoom-btn text"
-              :class="{ active: zoomMode === 'fit-width' }"
-              @click="fitWidth"
-            >
-              Fit width
-            </button>
-            <button
-              class="zoom-btn text"
-              :class="{ active: zoomMode === 'fit-page' }"
-              @click="fitPage"
-            >
-              Fit page
-            </button>
-          </div>
+          <ZoomControls
+            :scale="scale"
+            :mode="zoomMode"
+            @zoom-in="zoomIn"
+            @zoom-out="zoomOut"
+            @actual-size="actualSize"
+            @fit-width="fitWidth"
+            @fit-page="fitPage"
+          />
         </div>
         <div ref="stageRef" class="stage" data-preview-scroll>
           <div class="pages-stack" :style="stackStyle">
@@ -385,57 +373,6 @@ function onMovePage(direction) {
   font-size: 11px;
   font-weight: 400;
   color: var(--muted);
-}
-
-.zoom-controls {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.zoom-btn {
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.zoom-btn:hover {
-  color: var(--text);
-  border-color: var(--accent);
-}
-
-.zoom-btn.text.active {
-  color: var(--accent-hover);
-  border-color: var(--accent);
-  background: rgba(13, 110, 253, 0.08);
-}
-
-.zoom-level {
-  min-width: 46px;
-  padding: 4px 6px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.zoom-level:hover {
-  background: rgba(148, 163, 184, 0.12);
-}
-
-.zoom-sep {
-  width: 1px;
-  height: 16px;
-  margin: 0 3px;
-  background: var(--border);
 }
 
 .page-tabs {

@@ -5,6 +5,7 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { project, removeField } from '../composables/useProject.js'
 import { generatePdf, downloadPdf } from '../api.js'
 import { round } from '../utils/units.js'
+import ZoomControls from './ZoomControls.vue'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
 
@@ -17,7 +18,17 @@ const canvasRef = ref(null)
 
 const pageWidthPt = ref(0)
 const pageHeightPt = ref(0)
-const viewScale = ref(1)
+
+const zoomMode = ref('fit-page')
+const manualZoom = ref(1)
+const fitPageScale = ref(1)
+const fitWidthScale = ref(1)
+
+const viewScale = computed(() => {
+  if (zoomMode.value === 'manual') return manualZoom.value
+  if (zoomMode.value === 'fit-width') return fitWidthScale.value
+  return fitPageScale.value
+})
 
 const currentPageIndex = ref(0)
 const numPages = ref(0)
@@ -76,11 +87,80 @@ function computeScale() {
   const availableWidth = el.clientWidth - padding
   const availableHeight = el.clientHeight - padding
   if (availableWidth <= 0 || availableHeight <= 0) return
-  viewScale.value = Math.min(
+
+  fitWidthScale.value = Math.min(availableWidth / pageWidthPt.value, 2)
+  fitPageScale.value = Math.min(
     availableWidth / pageWidthPt.value,
     availableHeight / pageHeightPt.value,
     2
   )
+}
+
+function clampZoom(value) {
+  return clamp(value, 0.1, 3)
+}
+
+function captureZoomCenter() {
+  const stage = stageRef.value
+  const page = pageRef.value
+  if (!stage || !page) return null
+  const stageRect = stage.getBoundingClientRect()
+  const pageRect = page.getBoundingClientRect()
+  const pageLeft = pageRect.left - stageRect.left + stage.scrollLeft
+  const pageTop = pageRect.top - stageRect.top + stage.scrollTop
+  return {
+    relX: (stage.scrollLeft + stage.clientWidth / 2 - pageLeft) / viewScale.value,
+    relY: (stage.scrollTop + stage.clientHeight / 2 - pageTop) / viewScale.value
+  }
+}
+
+function restoreZoomCenter(center) {
+  if (!center) return
+  nextTick(() => {
+    const stage = stageRef.value
+    const page = pageRef.value
+    if (!stage || !page) return
+    const stageRect = stage.getBoundingClientRect()
+    const pageRect = page.getBoundingClientRect()
+    const pageLeft = pageRect.left - stageRect.left + stage.scrollLeft
+    const pageTop = pageRect.top - stageRect.top + stage.scrollTop
+    stage.scrollLeft = pageLeft + center.relX * viewScale.value - stage.clientWidth / 2
+    stage.scrollTop = pageTop + center.relY * viewScale.value - stage.clientHeight / 2
+  })
+}
+
+function stepZoom(delta) {
+  const center = captureZoomCenter()
+  manualZoom.value = clampZoom(Math.round((viewScale.value + delta) * 100) / 100)
+  zoomMode.value = 'manual'
+  restoreZoomCenter(center)
+}
+
+function zoomIn() {
+  stepZoom(0.1)
+}
+
+function zoomOut() {
+  stepZoom(-0.1)
+}
+
+function actualSize() {
+  const center = captureZoomCenter()
+  manualZoom.value = 1
+  zoomMode.value = 'manual'
+  restoreZoomCenter(center)
+}
+
+function fitWidth() {
+  const center = captureZoomCenter()
+  zoomMode.value = 'fit-width'
+  restoreZoomCenter(center)
+}
+
+function fitPage() {
+  const center = captureZoomCenter()
+  zoomMode.value = 'fit-page'
+  restoreZoomCenter(center)
 }
 
 async function renderCanvas() {
@@ -94,14 +174,13 @@ async function renderCanvas() {
     renderTask = null
   }
 
-  const viewport = pdfPage.getViewport({ scale: viewScale.value })
+  const renderScale = Math.min(viewScale.value, 2)
+  const viewport = pdfPage.getViewport({ scale: renderScale })
   const canvas = canvasRef.value
   const dpr = window.devicePixelRatio || 1
 
   canvas.width = Math.floor(viewport.width * dpr)
   canvas.height = Math.floor(viewport.height * dpr)
-  canvas.style.width = `${viewport.width}px`
-  canvas.style.height = `${viewport.height}px`
 
   const task = pdfPage.render({
     canvasContext: canvas.getContext('2d'),
@@ -207,6 +286,10 @@ watch(
   }
 )
 
+watch(viewScale, () => {
+  scheduleRerender()
+})
+
 function togglePending(type) {
   pendingType.value = pendingType.value === type ? null : type
 }
@@ -294,13 +377,16 @@ function onResizePointerDown(event, field) {
   const startY = event.clientY
   const originW = field.w
   const originH = field.h
+  const top = field.y + originH
   const scale = viewScale.value
 
   const onMove = (moveEvent) => {
     const dw = (moveEvent.clientX - startX) / scale
     const dh = (moveEvent.clientY - startY) / scale
     field.w = round(clamp(originW + dw, 8, pageWidthPt.value - field.x))
-    field.h = round(clamp(originH + dh, 8, pageHeightPt.value - field.y))
+    const nextH = round(clamp(originH + dh, 8, top))
+    field.h = nextH
+    field.y = round(top - nextH)
   }
 
   const onUp = () => {
@@ -411,6 +497,17 @@ async function onExport() {
       <div class="spacer"></div>
 
       <span v-if="error" class="error-text">{{ error }}</span>
+
+      <ZoomControls
+        :scale="viewScale"
+        :mode="zoomMode"
+        @zoom-in="zoomIn"
+        @zoom-out="zoomOut"
+        @actual-size="actualSize"
+        @fit-width="fitWidth"
+        @fit-page="fitPage"
+      />
+
       <button class="btn btn-ghost" :disabled="busy" @click="emit('regenerate')">
         Regenerate
       </button>
