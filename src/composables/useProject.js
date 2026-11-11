@@ -16,6 +16,31 @@ function createPage(html = DEFAULT_HTML) {
   return { id: uid(), html }
 }
 
+function createFieldDefaults() {
+  return {
+    text: { width: 160, height: 20 },
+    checkbox: { size: 14 }
+  }
+}
+
+function normalizeSize(value, fallback) {
+  const size = Number(value)
+  return Number.isFinite(size) && size > 0 ? size : fallback
+}
+
+function normalizeFieldDefaults(saved) {
+  const defaults = createFieldDefaults()
+  return {
+    text: {
+      width: normalizeSize(saved?.text?.width, defaults.text.width),
+      height: normalizeSize(saved?.text?.height, defaults.text.height)
+    },
+    checkbox: {
+      size: normalizeSize(saved?.checkbox?.size, defaults.checkbox.size)
+    }
+  }
+}
+
 function createDefaults() {
   const page = createPage()
   return {
@@ -25,6 +50,7 @@ function createDefaults() {
     width: 8.5,
     height: 11,
     fields: [],
+    fieldDefaults: createFieldDefaults(),
     preset: 'Letter (8.5 × 11 in)',
     activePageId: page.id
   }
@@ -92,6 +118,7 @@ function loadProject() {
       width: Number(saved.width) || defaults.width,
       height: Number(saved.height) || defaults.height,
       fields,
+      fieldDefaults: normalizeFieldDefaults(saved.fieldDefaults),
       preset: typeof saved.preset === 'string' ? saved.preset : defaults.preset,
       activePageId
     }
@@ -119,6 +146,7 @@ watch(
             width: project.width,
             height: project.height,
             fields: project.fields,
+            fieldDefaults: project.fieldDefaults,
             preset: project.preset,
             activePageId: project.activePageId
           })

@@ -309,8 +309,14 @@ function onPageClick(event) {
   const scale = viewScale.value
 
   const isCheckbox = pendingType.value === 'checkbox'
-  const width = isCheckbox ? 14 : 160
-  const height = isCheckbox ? 14 : 20
+  const defaults = project.fieldDefaults?.[pendingType.value] ?? {}
+  const maxCheckboxSize = Math.min(pageWidthPt.value, pageHeightPt.value)
+  const width = isCheckbox
+    ? round(clamp(Number(defaults.size) || 14, 4, maxCheckboxSize))
+    : round(clamp(Number(defaults.width) || 160, 4, pageWidthPt.value))
+  const height = isCheckbox
+    ? width
+    : round(clamp(Number(defaults.height) || 20, 4, pageHeightPt.value))
 
   const x = clamp(cssX / scale, 0, pageWidthPt.value - width)
   const y = clamp(pageHeightPt.value - cssY / scale - height, 0, pageHeightPt.value - height)
@@ -338,6 +344,25 @@ function onPageClick(event) {
   project.fields.push(field)
   selectedId.value = field.id
   pendingType.value = null
+}
+
+function clampDefaultSize(type, dimension) {
+  const defaults = project.fieldDefaults[type]
+  if (!defaults) return
+
+  const max =
+    dimension === 'width'
+      ? pageWidthPt.value
+      : dimension === 'height'
+        ? pageHeightPt.value
+        : Math.min(pageWidthPt.value, pageHeightPt.value)
+  if (!max) return
+
+  const fallback = dimension === 'width' ? 160 : dimension === 'height' ? 20 : 14
+  const raw = defaults[dimension]
+  const numeric = Number(raw)
+  const value = raw === '' || raw == null || !Number.isFinite(numeric) ? fallback : numeric
+  defaults[dimension] = round(clamp(value, 4, max))
 }
 
 function onFieldPointerDown(event, field) {
@@ -654,6 +679,48 @@ async function onExport() {
             Drag to move, nudge with the arrow keys, Ctrl+arrow to resize (Shift for 10pt), or use the corner handle. Press Delete to remove.
           </p>
         </div>
+
+        <div class="defaults">
+          <div class="defaults-head">New field defaults</div>
+          <div class="prop-row">
+            <div class="prop">
+              <label class="field-label">Text width (pt)</label>
+              <input
+                v-model.number="project.fieldDefaults.text.width"
+                class="input"
+                type="number"
+                min="4"
+                :max="pageWidthPt"
+                @change="clampDefaultSize('text', 'width')"
+              />
+            </div>
+            <div class="prop">
+              <label class="field-label">Text height (pt)</label>
+              <input
+                v-model.number="project.fieldDefaults.text.height"
+                class="input"
+                type="number"
+                min="4"
+                :max="pageHeightPt"
+                @change="clampDefaultSize('text', 'height')"
+              />
+            </div>
+          </div>
+          <div class="prop-row">
+            <div class="prop">
+              <label class="field-label">Checkbox size (pt)</label>
+              <input
+                v-model.number="project.fieldDefaults.checkbox.size"
+                class="input"
+                type="number"
+                min="4"
+                :max="Math.min(pageWidthPt, pageHeightPt)"
+                @change="clampDefaultSize('checkbox', 'size')"
+              />
+            </div>
+          </div>
+          <p class="defaults-hint">Used for newly placed fields.</p>
+        </div>
       </aside>
     </div>
   </section>
@@ -856,6 +923,8 @@ async function onExport() {
 }
 
 .props-body {
+  flex: 1;
+  min-height: 0;
   padding: 16px 18px;
   overflow: auto;
   display: flex;
@@ -864,6 +933,9 @@ async function onExport() {
 }
 
 .props-empty {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   padding: 18px;
   font-size: 13px;
   color: var(--text);
@@ -873,6 +945,26 @@ async function onExport() {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.defaults {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+}
+
+.defaults-head {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.defaults-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
 }
 
 .prop {
