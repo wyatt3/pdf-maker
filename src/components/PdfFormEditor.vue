@@ -2,8 +2,15 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import * as pdfjsLib from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import { project, removeField } from '../composables/useProject.js'
-import { generatePdf, downloadPdf } from '../api.js'
+import { project, removeFields } from '../composables/useProject.js'
+import {
+  generatePdf,
+  downloadPdf,
+  canSaveAs,
+  pickSaveFile,
+  writeBlobToHandle,
+  pdfBlob
+} from '../api.js'
 import { round } from '../utils/units.js'
 import ZoomControls from './ZoomControls.vue'
 
@@ -33,7 +40,8 @@ const viewScale = computed(() => {
 const currentPageIndex = ref(0)
 const numPages = ref(0)
 
-const selectedId = ref(null)
+const selectedIds = ref([])
+const marquee = ref(null)
 const pendingType = ref(null)
 const busy = ref(false)
 const error = ref('')
@@ -44,6 +52,7 @@ let renderTask = null
 let pageLoadToken = 0
 let resizeObserver = null
 let resizeTimer = null
+let marqueeCleanup = null
 
 const displayWidth = computed(() => pageWidthPt.value * viewScale.value)
 const displayHeight = computed(() => pageHeightPt.value * viewScale.value)
@@ -62,12 +71,53 @@ const currentFields = computed(() => {
   return project.fields.filter((field) => field.pageId === pageId)
 })
 
-const selectedField = computed(
-  () => project.fields.find((field) => field.id === selectedId.value) ?? null
+const selectedField = computed(() => {
+  if (selectedIds.value.length !== 1) return null
+  return currentFields.value.find((field) => field.id === selectedIds.value[0]) ?? null
+})
+
+const selectedFields = computed(() =>
+  currentFields.value.filter((field) => selectedIds.value.includes(field.id))
 )
+
+function isSelected(id) {
+  return selectedIds.value.includes(id)
+}
+
+function setSelection(ids) {
+  selectedIds.value = [...new Set(ids)]
+}
+
+function selectOnly(id) {
+  setSelection(id ? [id] : [])
+}
+
+function toggleSelection(id) {
+  if (isSelected(id)) {
+    setSelection(selectedIds.value.filter((selected) => selected !== id))
+  } else {
+    setSelection([...selectedIds.value, id])
+  }
+}
 
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max)
+}
+
+function getMoveBounds(items) {
+  return {
+    minX: Math.max(...items.map((item) => -item.x)),
+    maxX: Math.min(...items.map((item) => pageWidthPt.value - item.w - item.x)),
+    minY: Math.max(...items.map((item) => -item.y)),
+    maxY: Math.min(...items.map((item) => pageHeightPt.value - item.h - item.y))
+  }
+}
+
+function clampMove(dx, dy, bounds) {
+  return {
+    dx: clamp(dx, bounds.minX, bounds.maxX),
+    dy: clamp(dy, bounds.minY, bounds.maxY)
+  }
 }
 
 function fieldStyle(field) {
@@ -79,6 +129,18 @@ function fieldStyle(field) {
     height: `${field.h * scale}px`
   }
 }
+
+const marqueeStyle = computed(() => {
+  const current = marquee.value
+  if (!current) return {}
+  const scale = viewScale.value
+  return {
+    left: `${Math.min(current.startX, current.currentX) * scale}px`,
+    top: `${Math.min(current.startY, current.currentY) * scale}px`,
+    width: `${Math.abs(current.currentX - current.startX) * scale}px`,
+    height: `${Math.abs(current.currentY - current.startY) * scale}px`
+  }
+})
 
 function computeScale() {
   const el = stageRef.value
@@ -241,7 +303,8 @@ async function loadDocument() {
 
 async function goToPage(index) {
   if (index === currentPageIndex.value) return
-  selectedId.value = null
+  marqueeCleanup?.()
+  setSelection([])
   pendingType.value = null
   await loadPage(index)
 }
@@ -266,6 +329,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   clearTimeout(resizeTimer)
+  marqueeCleanup?.()
   window.removeEventListener('keydown', onKeydown)
   if (renderTask) {
     try {
@@ -294,11 +358,92 @@ function togglePending(type) {
   pendingType.value = pendingType.value === type ? null : type
 }
 
-function onPageClick(event) {
-  if (!pendingType.value) {
-    selectedId.value = null
-    return
+function onPagePointerDown(event) {
+  if (pendingType.value || event.button !== 0) return
+  if (event.target.closest?.('.field-box')) return
+
+  const page = pageRef.value
+  if (!page) return
+
+  marqueeCleanup?.()
+  event.preventDefault()
+
+  const rect = page.getBoundingClientRect()
+  const scale = viewScale.value
+  const startX = clamp((event.clientX - rect.left) / scale, 0, pageWidthPt.value)
+  const startY = clamp((event.clientY - rect.top) / scale, 0, pageHeightPt.value)
+  const additive = event.shiftKey || event.metaKey || event.ctrlKey
+  const baseSelection = additive ? selectedIds.value.slice() : []
+
+  if (!additive) setSelection([])
+
+  marquee.value = {
+    startX,
+    startY,
+    currentX: startX,
+    currentY: startY,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    additive,
+    baseSelection
   }
+
+  const onMove = (moveEvent) => {
+    const current = marquee.value
+    if (!current) return
+
+    const currentRect = page.getBoundingClientRect()
+    const currentScale = viewScale.value
+    current.currentX = clamp(
+      (moveEvent.clientX - currentRect.left) / currentScale,
+      0,
+      pageWidthPt.value
+    )
+    current.currentY = clamp(
+      (moveEvent.clientY - currentRect.top) / currentScale,
+      0,
+      pageHeightPt.value
+    )
+
+    const distance = Math.hypot(
+      moveEvent.clientX - current.startClientX,
+      moveEvent.clientY - current.startClientY
+    )
+    if (distance < 3) return
+
+    const left = Math.min(current.startX, current.currentX)
+    const top = Math.min(current.startY, current.currentY)
+    const right = Math.max(current.startX, current.currentX)
+    const bottom = Math.max(current.startY, current.currentY)
+    const hitIds = currentFields.value
+      .filter(
+        (field) =>
+          field.x < right &&
+          field.x + field.w > left &&
+          field.y < bottom &&
+          field.y + field.h > top
+      )
+      .map((field) => field.id)
+
+    setSelection(current.additive ? [...current.baseSelection, ...hitIds] : hitIds)
+  }
+
+  function cleanup() {
+    window.removeEventListener('pointermove', onMove)
+    window.removeEventListener('pointerup', cleanup)
+    window.removeEventListener('pointercancel', cleanup)
+    if (marqueeCleanup === cleanup) marqueeCleanup = null
+    marquee.value = null
+  }
+
+  marqueeCleanup = cleanup
+  window.addEventListener('pointermove', onMove)
+  window.addEventListener('pointerup', cleanup)
+  window.addEventListener('pointercancel', cleanup)
+}
+
+function onPageClick(event) {
+  if (!pendingType.value) return
 
   const page = currentPage.value
   if (!page) return
@@ -342,7 +487,7 @@ function onPageClick(event) {
   }
 
   project.fields.push(field)
-  selectedId.value = field.id
+  selectOnly(field.id)
   pendingType.value = null
 }
 
@@ -385,35 +530,61 @@ function setFieldDimension(dimension, rawValue) {
 function onFieldPointerDown(event, field) {
   if (event.button !== 0) return
   event.preventDefault()
-  selectedId.value = field.id
+
+  if (event.shiftKey || event.metaKey || event.ctrlKey) {
+    toggleSelection(field.id)
+    return
+  }
+
+  if (!isSelected(field.id)) selectOnly(field.id)
+
+  const fields = selectedFields.value
+  if (!fields.length) return
 
   const startX = event.clientX
   const startY = event.clientY
-  const originX = field.x
-  const originY = field.y
   const scale = viewScale.value
+  const origins = fields.map((item) => ({
+    field: item,
+    x: item.x,
+    y: item.y,
+    w: item.w,
+    h: item.h
+  }))
+  const bounds = getMoveBounds(origins)
 
   const onMove = (moveEvent) => {
     const dx = (moveEvent.clientX - startX) / scale
     const dy = (moveEvent.clientY - startY) / scale
-    field.x = round(clamp(originX + dx, 0, pageWidthPt.value - field.w))
-    field.y = round(clamp(originY + dy, 0, pageHeightPt.value - field.h))
+    const clamped = clampMove(dx, dy, bounds)
+    for (const origin of origins) {
+      origin.field.x = round(
+        clamp(origin.x + clamped.dx, 0, pageWidthPt.value - origin.w)
+      )
+      origin.field.y = round(
+        clamp(origin.y + clamped.dy, 0, pageHeightPt.value - origin.h)
+      )
+    }
   }
 
   const onUp = () => {
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
+    window.removeEventListener('pointercancel', onUp)
   }
 
   window.addEventListener('pointermove', onMove)
   window.addEventListener('pointerup', onUp)
+  window.addEventListener('pointercancel', onUp)
 }
+
+function onFieldClick() {}
 
 function onResizePointerDown(event, field) {
   if (event.button !== 0) return
   event.preventDefault()
   event.stopPropagation()
-  selectedId.value = field.id
+  selectOnly(field.id)
 
   const startX = event.clientX
   const startY = event.clientY
@@ -448,22 +619,30 @@ function onKeydown(event) {
   const tag = document.activeElement?.tagName
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
 
+  if (event.key === 'Escape') {
+    if (!selectedIds.value.length) return
+    event.preventDefault()
+    setSelection([])
+    return
+  }
+
   if (event.key === 'Delete' || event.key === 'Backspace') {
-    if (!selectedId.value) return
+    if (!selectedIds.value.length) return
     event.preventDefault()
     removeSelected()
     return
   }
 
   const delta = ARROW_DELTAS[event.key]
-  if (!delta || !selectedField.value) return
+  if (!delta || !selectedFields.value.length) return
   if (event.metaKey || event.altKey) return
 
   event.preventDefault()
   const step = event.shiftKey ? 10 : 1
-  const field = selectedField.value
 
   if (event.ctrlKey) {
+    const field = selectedField.value
+    if (!field) return
     const maxH = pageHeightPt.value - field.y
     if (delta[0] === 1) {
       field.w = round(clamp(field.w + step, 8, pageWidthPt.value - field.x))
@@ -478,19 +657,41 @@ function onKeydown(event) {
     return
   }
 
-  field.x = round(clamp(field.x + delta[0] * step, 0, pageWidthPt.value - field.w))
-  field.y = round(clamp(field.y - delta[1] * step, 0, pageHeightPt.value - field.h))
+  const fields = selectedFields.value
+  const bounds = getMoveBounds(fields)
+  const clamped = clampMove(delta[0] * step, -delta[1] * step, bounds)
+  for (const field of fields) {
+    field.x = round(field.x + clamped.dx)
+    field.y = round(field.y + clamped.dy)
+  }
 }
 
 function removeSelected() {
-  if (!selectedId.value) return
-  removeField(selectedId.value)
-  selectedId.value = null
+  if (!selectedIds.value.length) return
+  removeFields(selectedIds.value)
+  setSelection([])
 }
 
 async function onExport() {
-  busy.value = true
   error.value = ''
+  let handle = null
+  let usePicker = canSaveAs()
+
+  if (usePicker) {
+    try {
+      handle = await pickSaveFile({
+        suggestedName: 'form.pdf',
+        description: 'PDF document',
+        mimeType: 'application/pdf',
+        extension: '.pdf'
+      })
+    } catch {
+      usePicker = false
+    }
+    if (usePicker && !handle) return
+  }
+
+  busy.value = true
   try {
     const fields = project.fields.map((field) => {
       const index = project.pages.findIndex((page) => page.id === field.pageId)
@@ -504,7 +705,11 @@ async function onExport() {
       unit: project.unit,
       fields
     })
-    downloadPdf(bytes, 'form.pdf')
+    if (handle) {
+      await writeBlobToHandle(handle, pdfBlob(bytes))
+    } else {
+      downloadPdf(bytes, 'form.pdf')
+    }
   } catch (err) {
     error.value = err?.message || 'Export failed'
   } finally {
@@ -567,6 +772,7 @@ async function onExport() {
       </span>
       <span v-else class="place-hint">
         {{ currentFields.length }} field(s) on this page · {{ project.fields.length }} total
+        <span v-if="selectedIds.length > 1"> · {{ selectedIds.length }} selected</span>
       </span>
 
       <div class="spacer"></div>
@@ -588,13 +794,19 @@ async function onExport() {
       </button>
       <button class="btn btn-primary" :disabled="busy" @click="onExport">
         <span v-if="busy" class="spinner"></span>
-        <span>{{ busy ? 'Exporting…' : 'Export PDF' }}</span>
+        <span>{{ busy ? 'Exporting…' : 'Export PDF…' }}</span>
       </button>
     </header>
 
     <div class="editor-body">
       <div ref="stageRef" class="stage">
-        <div ref="pageRef" class="page" :style="pageStyle" @click="onPageClick">
+        <div
+          ref="pageRef"
+          class="page"
+          :style="pageStyle"
+          @click="onPageClick"
+          @pointerdown="onPagePointerDown"
+        >
           <canvas ref="canvasRef" class="pdf-canvas"></canvas>
           <div class="overlay">
             <div
@@ -602,19 +814,21 @@ async function onExport() {
               :key="field.id"
               class="field-box"
               :class="{
-                selected: field.id === selectedId,
+                selected: isSelected(field.id),
                 'is-checkbox': field.type === 'checkbox'
               }"
               :style="fieldStyle(field)"
               @pointerdown.stop="onFieldPointerDown($event, field)"
-              @click.stop="selectedId = field.id"
+              @click.stop="onFieldClick"
             >
               <span class="field-tag">{{ field.name }}</span>
               <span
+                v-if="selectedIds.length === 1 && isSelected(field.id)"
                 class="resize-handle"
                 @pointerdown.stop="onResizePointerDown($event, field)"
               ></span>
             </div>
+            <div v-if="marquee" class="marquee" :style="marqueeStyle"></div>
           </div>
         </div>
       </div>
@@ -712,10 +926,27 @@ async function onExport() {
           </div>
         </div>
 
+        <div v-else-if="selectedIds.length > 1" class="props-body">
+          <div class="prop">
+            <span class="field-label">Selection</span>
+            <span class="type-pill">{{ selectedIds.length }} fields selected</span>
+          </div>
+          <p class="muted">
+            Drag any selected field to move the group. Shift-click or Ctrl/Cmd-click to add or remove fields, or drag a box on the page.
+          </p>
+          <div class="prop-actions">
+            <span class="coords">Fields move together</span>
+            <button class="btn btn-danger" @click="removeSelected">Delete selected</button>
+          </div>
+        </div>
+
         <div v-else class="props-empty">
           <p>Select a field to edit it, or add one from the toolbar.</p>
           <p class="muted">
             Drag to move, nudge with the arrow keys, Ctrl+arrow to resize (Shift for 10pt), or use the corner handle. Press Delete to remove.
+          </p>
+          <p class="muted">
+            Shift-click or Ctrl/Cmd-click to select multiple fields, or drag a box on the page. Drag any selected field to move the group.
           </p>
         </div>
 
@@ -873,6 +1104,14 @@ async function onExport() {
   pointer-events: none;
 }
 
+.marquee {
+  position: absolute;
+  border: 1px dashed var(--accent);
+  background: rgba(37, 99, 235, 0.12);
+  pointer-events: none;
+  z-index: 5;
+}
+
 .field-box {
   position: absolute;
   pointer-events: auto;
@@ -980,7 +1219,9 @@ async function onExport() {
   color: var(--text);
 }
 
-.props-empty .muted {
+.props-empty .muted,
+.props-body .muted {
+  margin: 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;

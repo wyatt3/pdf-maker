@@ -361,6 +361,11 @@ export function removeField(id) {
   project.fields = project.fields.filter((field) => field.id !== id)
 }
 
+export function removeFields(ids) {
+  const selected = new Set(ids)
+  project.fields = project.fields.filter((field) => !selected.has(field.id))
+}
+
 export function pageIndex(pageId) {
   return project.pages.findIndex((page) => page.id === pageId)
 }

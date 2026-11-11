@@ -2,7 +2,14 @@
 import { ref } from 'vue'
 import PageDesigner from './components/PageDesigner.vue'
 import PdfFormEditor from './components/PdfFormEditor.vue'
-import { generatePdf, downloadJson } from './api.js'
+import {
+  generatePdf,
+  downloadJson,
+  canSaveAs,
+  pickSaveFile,
+  writeBlobToHandle,
+  jsonBlob
+} from './api.js'
 import {
   project,
   newProject,
@@ -66,11 +73,34 @@ function handleNew() {
   step.value = 'design'
 }
 
-function handleExportJson() {
+async function handleExportJson() {
   error.value = ''
+  const date = new Date().toISOString().slice(0, 10)
+  const filename = `pdf-maker-project-${date}.json`
+  let handle = null
+  let usePicker = canSaveAs()
+
+  if (usePicker) {
+    try {
+      handle = await pickSaveFile({
+        suggestedName: filename,
+        description: 'PDF Maker project',
+        mimeType: 'application/json',
+        extension: '.json'
+      })
+    } catch {
+      usePicker = false
+    }
+    if (usePicker && !handle) return
+  }
+
   try {
-    const date = new Date().toISOString().slice(0, 10)
-    downloadJson(exportProject(), `pdf-maker-project-${date}.json`)
+    const data = exportProject()
+    if (handle) {
+      await writeBlobToHandle(handle, jsonBlob(data))
+    } else {
+      downloadJson(data, filename)
+    }
   } catch (e) {
     error.value = `Could not export project: ${e.message}`
   }
@@ -159,7 +189,7 @@ async function handleImportFile(event) {
         <button class="btn btn-ghost" :disabled="generating" @click="triggerImport">
           Import JSON
         </button>
-        <button class="btn btn-ghost" @click="handleExportJson">Export JSON</button>
+        <button class="btn btn-ghost" @click="handleExportJson">Export JSON…</button>
         <button class="btn btn-ghost" :disabled="generating" @click="handleNew">
           New project
         </button>

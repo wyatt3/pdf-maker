@@ -30,13 +30,56 @@ function downloadBlob(blob, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1500)
 }
 
+export function canSaveAs() {
+  return typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function'
+}
+
+export async function pickSaveFile({ suggestedName, description, mimeType, extension }) {
+  try {
+    return await window.showSaveFilePicker({
+      suggestedName,
+      types: [
+        {
+          description,
+          accept: {
+            [mimeType]: [extension]
+          }
+        }
+      ]
+    })
+  } catch (error) {
+    if (error?.name === 'AbortError') return null
+    throw error
+  }
+}
+
+export async function writeBlobToHandle(handle, blob) {
+  const writable = await handle.createWritable()
+  try {
+    await writable.write(blob)
+    await writable.close()
+  } catch (error) {
+    try {
+      await writable.abort()
+    } catch {}
+    throw error
+  }
+}
+
+export function pdfBlob(bytes) {
+  return new Blob([bytes], { type: 'application/pdf' })
+}
+
+export function jsonBlob(data) {
+  return new Blob([`${JSON.stringify(data, null, 2)}\n`], {
+    type: 'application/json'
+  })
+}
+
 export function downloadPdf(bytes, filename = 'form.pdf') {
-  downloadBlob(new Blob([bytes], { type: 'application/pdf' }), filename)
+  downloadBlob(pdfBlob(bytes), filename)
 }
 
 export function downloadJson(data, filename = 'pdf-maker-project.json') {
-  const blob = new Blob([`${JSON.stringify(data, null, 2)}\n`], {
-    type: 'application/json'
-  })
-  downloadBlob(blob, filename)
+  downloadBlob(jsonBlob(data), filename)
 }
