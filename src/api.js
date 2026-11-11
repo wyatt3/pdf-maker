@@ -19,8 +19,7 @@ export async function generatePdf({ pages, html, css, width, height, unit, field
   return new Uint8Array(await response.arrayBuffer())
 }
 
-export function downloadPdf(bytes, filename = 'form.pdf') {
-  const blob = new Blob([bytes], { type: 'application/pdf' })
+function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
   anchor.href = url
@@ -29,4 +28,15 @@ export function downloadPdf(bytes, filename = 'form.pdf') {
   anchor.click()
   anchor.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1500)
+}
+
+export function downloadPdf(bytes, filename = 'form.pdf') {
+  downloadBlob(new Blob([bytes], { type: 'application/pdf' }), filename)
+}
+
+export function downloadJson(data, filename = 'pdf-maker-project.json') {
+  const blob = new Blob([`${JSON.stringify(data, null, 2)}\n`], {
+    type: 'application/json'
+  })
+  downloadBlob(blob, filename)
 }

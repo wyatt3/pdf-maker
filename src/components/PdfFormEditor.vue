@@ -337,7 +337,7 @@ function onPageClick(event) {
     required: false,
     fontSize: 10,
     multiline: false,
-    border: true,
+    border: false,
     tooltip: ''
   }
 
@@ -363,6 +363,23 @@ function clampDefaultSize(type, dimension) {
   const numeric = Number(raw)
   const value = raw === '' || raw == null || !Number.isFinite(numeric) ? fallback : numeric
   defaults[dimension] = round(clamp(value, 4, max))
+}
+
+function setFieldDimension(dimension, rawValue) {
+  const field = selectedField.value
+  if (!field) return
+
+  const isWidth = dimension === 'w'
+  const pageSize = isWidth ? pageWidthPt.value : pageHeightPt.value
+  if (!pageSize) return
+
+  const position = isWidth ? 'x' : 'y'
+  const fallback = field.type === 'checkbox' ? 14 : isWidth ? 160 : 20
+  const numeric = Number(rawValue)
+  const value = rawValue === '' || rawValue == null || !Number.isFinite(numeric) ? fallback : numeric
+
+  field[position] = round(clamp(field[position], 0, Math.max(0, pageSize - 4)))
+  field[dimension] = round(clamp(value, 4, pageSize - field[position]))
 }
 
 function onFieldPointerDown(event, field) {
@@ -621,6 +638,33 @@ async function onExport() {
           <div class="prop">
             <label class="field-label">Field name</label>
             <input v-model="selectedField.name" class="input" />
+          </div>
+
+          <div class="prop-row">
+            <div class="prop">
+              <label class="field-label">Width (pt)</label>
+              <input
+                :value="selectedField.w"
+                class="input"
+                type="number"
+                min="4"
+                step="any"
+                :max="Math.max(4, pageWidthPt - selectedField.x)"
+                @change="setFieldDimension('w', $event.target.value)"
+              />
+            </div>
+            <div class="prop">
+              <label class="field-label">Height (pt)</label>
+              <input
+                :value="selectedField.h"
+                class="input"
+                type="number"
+                min="4"
+                step="any"
+                :max="Math.max(4, pageHeightPt - selectedField.y)"
+                @change="setFieldDimension('h', $event.target.value)"
+              />
+            </div>
           </div>
 
           <template v-if="selectedField.type === 'text'">

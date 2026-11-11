@@ -2,14 +2,22 @@
 import { ref } from 'vue'
 import PageDesigner from './components/PageDesigner.vue'
 import PdfFormEditor from './components/PdfFormEditor.vue'
-import { generatePdf } from './api.js'
-import { project, newProject } from './composables/useProject.js'
+import { generatePdf, downloadJson } from './api.js'
+import {
+  project,
+  newProject,
+  exportProject,
+  importProject
+} from './composables/useProject.js'
+
+const MAX_IMPORT_BYTES = 10 * 1024 * 1024
 
 const step = ref('design')
 const pdfBytes = ref(null)
 const generating = ref(false)
 const error = ref('')
 const lastSignature = ref('')
+const fileInputRef = ref(null)
 
 function currentSignature() {
   return JSON.stringify({
@@ -57,6 +65,69 @@ function handleNew() {
   error.value = ''
   step.value = 'design'
 }
+
+function handleExportJson() {
+  error.value = ''
+  try {
+    const date = new Date().toISOString().slice(0, 10)
+    downloadJson(exportProject(), `pdf-maker-project-${date}.json`)
+  } catch (e) {
+    error.value = `Could not export project: ${e.message}`
+  }
+}
+
+function triggerImport() {
+  if (generating.value) return
+  error.value = ''
+  fileInputRef.value?.click()
+}
+
+async function handleImportFile(event) {
+  const input = event.target
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (generating.value) return
+
+  if (file.size > MAX_IMPORT_BYTES) {
+    error.value = 'That file is too large (maximum is 10 MB).'
+    return
+  }
+
+  let text
+  try {
+    text = await file.text()
+  } catch {
+    error.value = 'Could not read that file.'
+    return
+  }
+
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch {
+    error.value = 'Could not import: the file is not valid JSON.'
+    return
+  }
+
+  if (
+    !confirm(
+      'Import this project? This replaces your current project and saved draft. Only import files you trust.'
+    )
+  ) {
+    return
+  }
+
+  try {
+    importProject(data)
+    pdfBytes.value = null
+    lastSignature.value = ''
+    error.value = ''
+    step.value = 'design'
+  } catch (e) {
+    error.value = `Could not import project: ${e.message}`
+  }
+}
 </script>
 
 <template>
@@ -84,7 +155,23 @@ function handleNew() {
         </button>
       </nav>
 
-      <button class="btn btn-ghost" @click="handleNew">New project</button>
+      <div class="header-actions">
+        <button class="btn btn-ghost" :disabled="generating" @click="triggerImport">
+          Import JSON
+        </button>
+        <button class="btn btn-ghost" @click="handleExportJson">Export JSON</button>
+        <button class="btn btn-ghost" :disabled="generating" @click="handleNew">
+          New project
+        </button>
+      </div>
+
+      <input
+        ref="fileInputRef"
+        type="file"
+        accept=".json,application/json"
+        hidden
+        @change="handleImportFile"
+      />
     </header>
 
     <p v-if="error" class="app-error">{{ error }}</p>
@@ -133,6 +220,13 @@ function handleNew() {
   font-size: 16px;
   margin: 0;
   line-height: 1.2;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .steps {
