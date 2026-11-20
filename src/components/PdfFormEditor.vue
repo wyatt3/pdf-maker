@@ -949,8 +949,6 @@ async function onExport() {
 .tool-group {
   display: flex;
   gap: 6px;
-  padding-left: 10px;
-  border-left: 1px solid var(--border);
 }
 
 .page-nav {
