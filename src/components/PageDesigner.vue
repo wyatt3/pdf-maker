@@ -1,44 +1,34 @@
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
-import DimensionControls from './DimensionControls.vue'
-import ZoomControls from './ZoomControls.vue'
-import {
-  project,
-  addPage,
-  duplicatePage,
-  removePage,
-  movePage
-} from '../composables/useProject.js'
-import { toCssPx } from '../utils/units.js'
-import { buildPageHtml } from '../../shared/pageHtml.js'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from "vue";
+import DimensionControls from "./DimensionControls.vue";
+import ZoomControls from "./ZoomControls.vue";
+import { project, addPage, duplicatePage, removePage, movePage } from "../composables/useProject.js";
+import { toCssPx } from "../utils/units.js";
+import { buildPageHtml } from "../../shared/pageHtml.js";
 
-defineProps({ busy: Boolean })
-defineEmits(['generate'])
+defineProps({ busy: Boolean });
+defineEmits(["generate"]);
 
-const stageRef = ref(null)
-const activeTab = ref('html')
-const zoomMode = ref('fit-width')
-const manualZoom = ref(1)
-const fitWidthScale = ref(1)
-const fitPageScale = ref(1)
-const PAGE_GAP = 24
+const stageRef = ref(null);
+const activeTab = ref("html");
+const zoomMode = ref("fit-width");
+const manualZoom = ref(1);
+const fitWidthScale = ref(1);
+const fitPageScale = ref(1);
+const PAGE_GAP = 24;
 
 const scale = computed(() => {
-  if (zoomMode.value === 'manual') return manualZoom.value
-  if (zoomMode.value === 'fit-page') return fitPageScale.value
-  return fitWidthScale.value
-})
+  if (zoomMode.value === "manual") return manualZoom.value;
+  if (zoomMode.value === "fit-page") return fitPageScale.value;
+  return fitWidthScale.value;
+});
 
-const pageWidthPx = computed(() => Math.max(1, Math.round(toCssPx(project.width, project.unit))))
-const pageHeightPx = computed(() => Math.max(1, Math.round(toCssPx(project.height, project.unit))))
+const pageWidthPx = computed(() => Math.max(1, Math.round(toCssPx(project.width, project.unit))));
+const pageHeightPx = computed(() => Math.max(1, Math.round(toCssPx(project.height, project.unit))));
 
-const activePage = computed(
-  () => project.pages.find((page) => page.id === project.activePageId) ?? project.pages[0]
-)
+const activePage = computed(() => project.pages.find((page) => page.id === project.activePageId) ?? project.pages[0]);
 
-const activeIndex = computed(() =>
-  project.pages.findIndex((page) => page.id === activePage.value?.id)
-)
+const activeIndex = computed(() => project.pages.findIndex((page) => page.id === activePage.value?.id));
 
 const previewDocs = computed(() =>
   project.pages.map((page) =>
@@ -46,140 +36,140 @@ const previewDocs = computed(() =>
       css: project.css,
       cssWidth: pageWidthPx.value,
       cssHeight: pageHeightPx.value,
-      preview: true
+      preview: true,
     })
   )
-)
+);
 
 const frameStyle = computed(() => ({
   width: `${pageWidthPx.value}px`,
   height: `${pageHeightPx.value}px`,
-  transform: `scale(${scale.value})`
-}))
+  transform: `scale(${scale.value})`,
+}));
 
 const stackStyle = computed(() => ({
-  gap: `${PAGE_GAP * scale.value}px`
-}))
+  gap: `${PAGE_GAP * scale.value}px`,
+}));
 
 const pageStyle = computed(() => ({
   width: `${pageWidthPx.value * scale.value}px`,
-  height: `${pageHeightPx.value * scale.value}px`
-}))
+  height: `${pageHeightPx.value * scale.value}px`,
+}));
 
 function updateScale() {
-  const el = stageRef.value
-  if (!el) return
-  const padding = 48
-  const labelSpace = 28
-  const availableWidth = el.clientWidth - padding
-  const availableHeight = el.clientHeight - padding - labelSpace
-  if (availableWidth <= 0) return
+  const el = stageRef.value;
+  if (!el) return;
+  const padding = 48;
+  const labelSpace = 28;
+  const availableWidth = el.clientWidth - padding;
+  const availableHeight = el.clientHeight - padding - labelSpace;
+  if (availableWidth <= 0) return;
 
-  fitWidthScale.value = Math.min(availableWidth / pageWidthPx.value, 1)
+  fitWidthScale.value = Math.min(availableWidth / pageWidthPx.value, 1);
   fitPageScale.value = Math.min(
     availableWidth / pageWidthPx.value,
     availableHeight > 0 ? availableHeight / pageHeightPx.value : 1,
     1
-  )
+  );
 }
 
 function scrollActiveIntoView() {
   nextTick(() => {
-    const stage = stageRef.value
-    const pageId = activePage.value?.id
-    if (!stage || !pageId) return
-    const target = stage.querySelector(`[data-page-id="${pageId}"]`)
-    if (!target) return
-    const stageRect = stage.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    stage.scrollTop += targetRect.top - stageRect.top - 24
-  })
+    const stage = stageRef.value;
+    const pageId = activePage.value?.id;
+    if (!stage || !pageId) return;
+    const target = stage.querySelector(`[data-page-id="${pageId}"]`);
+    if (!target) return;
+    const stageRect = stage.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    stage.scrollTop += targetRect.top - stageRect.top - 24;
+  });
 }
 
 function clampZoom(value) {
-  return Math.min(Math.max(value, 0.1), 3)
+  return Math.min(Math.max(value, 0.1), 3);
 }
 
 function stepZoom(delta) {
-  manualZoom.value = clampZoom(Math.round((scale.value + delta) * 100) / 100)
-  zoomMode.value = 'manual'
-  scrollActiveIntoView()
+  manualZoom.value = clampZoom(Math.round((scale.value + delta) * 100) / 100);
+  zoomMode.value = "manual";
+  scrollActiveIntoView();
 }
 
 function zoomIn() {
-  stepZoom(0.1)
+  stepZoom(0.1);
 }
 
 function zoomOut() {
-  stepZoom(-0.1)
+  stepZoom(-0.1);
 }
 
 function fitWidth() {
-  zoomMode.value = 'fit-width'
-  scrollActiveIntoView()
+  zoomMode.value = "fit-width";
+  scrollActiveIntoView();
 }
 
 function fitPage() {
-  zoomMode.value = 'fit-page'
-  scrollActiveIntoView()
+  zoomMode.value = "fit-page";
+  scrollActiveIntoView();
 }
 
 function actualSize() {
-  manualZoom.value = 1
-  zoomMode.value = 'manual'
-  scrollActiveIntoView()
+  manualZoom.value = 1;
+  zoomMode.value = "manual";
+  scrollActiveIntoView();
 }
 
-let observer
+let observer;
 onMounted(() => {
-  updateScale()
-  observer = new ResizeObserver(updateScale)
-  if (stageRef.value) observer.observe(stageRef.value)
-})
-onBeforeUnmount(() => observer?.disconnect())
+  updateScale();
+  observer = new ResizeObserver(updateScale);
+  if (stageRef.value) observer.observe(stageRef.value);
+});
+onBeforeUnmount(() => observer?.disconnect());
 
 watch([pageWidthPx, pageHeightPx], () => {
-  updateScale()
-  scrollActiveIntoView()
-})
+  updateScale();
+  scrollActiveIntoView();
+});
 
 function onEditorKeydown(event) {
-  if (event.key !== 'Tab') return
-  event.preventDefault()
-  const el = event.target
-  const start = el.selectionStart
-  const end = el.selectionEnd
-  const isCss = activeTab.value === 'css'
-  const value = isCss ? project.css : activePage.value.html
-  const next = value.slice(0, start) + '  ' + value.slice(end)
+  if (event.key !== "Tab") return;
+  event.preventDefault();
+  const el = event.target;
+  const start = el.selectionStart;
+  const end = el.selectionEnd;
+  const isCss = activeTab.value === "css";
+  const value = isCss ? project.css : activePage.value.html;
+  const next = value.slice(0, start) + "  " + value.slice(end);
 
-  if (isCss) project.css = next
-  else activePage.value.html = next
+  if (isCss) project.css = next;
+  else activePage.value.html = next;
 
   requestAnimationFrame(() => {
-    el.selectionStart = el.selectionEnd = start + 2
-  })
+    el.selectionStart = el.selectionEnd = start + 2;
+  });
 }
 
 function selectPage(pageId) {
-  project.activePageId = pageId
-  scrollActiveIntoView()
+  project.activePageId = pageId;
+  scrollActiveIntoView();
 }
 
 function onAddPage() {
-  addPage()
+  addPage();
 }
 
 function onDuplicatePage() {
-  if (activePage.value) duplicatePage(activePage.value.id)
+  if (activePage.value) duplicatePage(activePage.value.id);
 }
 
 function onRemovePage() {
-  if (activePage.value) removePage(activePage.value.id)
+  if (activePage.value) removePage(activePage.value.id);
 }
 
 function onMovePage(direction) {
-  if (activePage.value) movePage(activePage.value.id, direction)
+  if (activePage.value) movePage(activePage.value.id, direction);
 }
 </script>
 
@@ -204,12 +194,7 @@ function onMovePage(direction) {
             </button>
           </div>
           <div class="page-actions">
-            <button
-              class="mini-btn"
-              title="Move page left"
-              :disabled="activeIndex <= 0"
-              @click="onMovePage(-1)"
-            >
+            <button class="mini-btn" title="Move page left" :disabled="activeIndex <= 0" @click="onMovePage(-1)">
               ←
             </button>
             <button
@@ -220,40 +205,19 @@ function onMovePage(direction) {
             >
               →
             </button>
-            <button class="mini-btn" title="Duplicate page" @click="onDuplicatePage">
-              Duplicate
-            </button>
-            <button
-              class="mini-btn"
-              title="Delete page"
-              :disabled="project.pages.length <= 1"
-              @click="onRemovePage"
-            >
+            <button class="mini-btn" title="Duplicate page" @click="onDuplicatePage">Duplicate</button>
+            <button class="mini-btn" title="Delete page" :disabled="project.pages.length <= 1" @click="onRemovePage">
               Delete
             </button>
-            <button class="mini-btn add" title="Add page" @click="onAddPage">
-              + Add page
-            </button>
+            <button class="mini-btn add" title="Add page" @click="onAddPage">+ Add page</button>
           </div>
         </div>
 
         <div class="editor-tabs">
-          <button
-            class="editor-tab"
-            :class="{ active: activeTab === 'html' }"
-            @click="activeTab = 'html'"
-          >
-            HTML
-          </button>
-          <button
-            class="editor-tab"
-            :class="{ active: activeTab === 'css' }"
-            @click="activeTab = 'css'"
-          >
-            CSS
-          </button>
+          <button class="editor-tab" :class="{ active: activeTab === 'html' }" @click="activeTab = 'html'">HTML</button>
+          <button class="editor-tab" :class="{ active: activeTab === 'css' }" @click="activeTab = 'css'">CSS</button>
           <span class="pane-hint tab-hint">
-            {{ activeTab === 'css' ? 'CSS applies to all pages' : `Editing page ${activeIndex + 1}` }}
+            {{ activeTab === "css" ? "CSS applies to all pages" : `Editing page ${activeIndex + 1}` }}
           </span>
         </div>
         <textarea
@@ -274,13 +238,7 @@ function onMovePage(direction) {
           @keydown="onEditorKeydown"
         ></textarea>
         <div class="editor-actions">
-          <span class="pane-hint">
-            {{ project.pages.length }} page(s) · Draft autosaves in this browser
-          </span>
-          <button class="btn btn-primary" :disabled="busy" @click="$emit('generate')">
-            <span v-if="busy" class="spinner"></span>
-            <span>{{ busy ? 'Generating PDF…' : 'Generate PDF →' }}</span>
-          </button>
+          <span class="pane-hint"> {{ project.pages.length }} page(s) · Draft autosaves in this browser </span>
         </div>
       </div>
 
@@ -306,9 +264,7 @@ function onMovePage(direction) {
               :class="{ active: page.id === activePage?.id }"
               :data-page-id="page.id"
             >
-              <button class="preview-label" @click="selectPage(page.id)">
-                Page {{ index + 1 }}
-              </button>
+              <button class="preview-label" @click="selectPage(page.id)">Page {{ index + 1 }}</button>
               <div class="page-frame-wrap" :style="pageStyle">
                 <iframe
                   class="frame"
@@ -490,7 +446,7 @@ function onMovePage(direction) {
   padding: 16px 18px;
   background: #0f172a;
   color: #e2e8f0;
-  font-family: 'SFMono-Regular', ui-monospace, Menlo, Consolas, monospace;
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.6;
   tab-size: 2;

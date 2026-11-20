@@ -1,45 +1,39 @@
 <script setup>
-import { computed } from 'vue'
-import { project } from '../composables/useProject.js'
-import {
-  PRESETS,
-  MM_PER_IN,
-  toCssPx,
-  toPdfPt,
-  round
-} from '../utils/units.js'
+import { computed } from "vue";
+import { project } from "../composables/useProject.js";
+import { PRESETS, MM_PER_IN, toCssPx, toPdfPt, round } from "../utils/units.js";
 
-const presetOptions = [...PRESETS, { label: 'Custom', unit: null }]
+const presetOptions = [...PRESETS, { label: "Custom", unit: null }];
 
-const cssWidth = computed(() => Math.round(toCssPx(project.width, project.unit)))
-const cssHeight = computed(() => Math.round(toCssPx(project.height, project.unit)))
-const ptWidth = computed(() => round(toPdfPt(project.width, project.unit), 1))
-const ptHeight = computed(() => round(toPdfPt(project.height, project.unit), 1))
-const step = computed(() => (project.unit === 'in' ? 0.01 : 1))
+const cssWidth = computed(() => Math.round(toCssPx(project.width, project.unit)));
+const cssHeight = computed(() => Math.round(toCssPx(project.height, project.unit)));
+const ptWidth = computed(() => round(toPdfPt(project.width, project.unit), 1));
+const ptHeight = computed(() => round(toPdfPt(project.height, project.unit), 1));
+const step = computed(() => (project.unit === "in" ? 0.01 : 1));
 
 function applyPreset(event) {
-  const preset = PRESETS.find((item) => item.label === event.target.value)
+  const preset = PRESETS.find((item) => item.label === event.target.value);
   if (!preset) {
-    project.preset = 'Custom'
-    return
+    project.preset = "Custom";
+    return;
   }
-  project.preset = preset.label
-  project.unit = preset.unit
-  project.width = preset.width
-  project.height = preset.height
+  project.preset = preset.label;
+  project.unit = preset.unit;
+  project.width = preset.width;
+  project.height = preset.height;
 }
 
 function setUnit(unit) {
-  if (project.unit === unit) return
-  const factor = unit === 'mm' ? MM_PER_IN : 1 / MM_PER_IN
-  project.width = round(Number(project.width) * factor, unit === 'mm' ? 1 : 3)
-  project.height = round(Number(project.height) * factor, unit === 'mm' ? 1 : 3)
-  project.unit = unit
-  project.preset = 'Custom'
+  if (project.unit === unit) return;
+  const factor = unit === "mm" ? MM_PER_IN : 1 / MM_PER_IN;
+  project.width = round(Number(project.width) * factor, unit === "mm" ? 1 : 3);
+  project.height = round(Number(project.height) * factor, unit === "mm" ? 1 : 3);
+  project.unit = unit;
+  project.preset = "Custom";
 }
 
 function markCustom() {
-  project.preset = 'Custom'
+  project.preset = "Custom";
 }
 </script>
 
@@ -57,50 +51,19 @@ function markCustom() {
     <div class="dim-group">
       <label class="field-label">Units</label>
       <div class="unit-toggle">
-        <button
-          class="unit-btn"
-          :class="{ active: project.unit === 'in' }"
-          @click="setUnit('in')"
-        >
-          Inches
-        </button>
-        <button
-          class="unit-btn"
-          :class="{ active: project.unit === 'mm' }"
-          @click="setUnit('mm')"
-        >
-          mm
-        </button>
+        <button class="unit-btn" :class="{ active: project.unit === 'in' }" @click="setUnit('in')">Inches</button>
+        <button class="unit-btn" :class="{ active: project.unit === 'mm' }" @click="setUnit('mm')">mm</button>
       </div>
     </div>
 
     <div class="dim-group narrow">
       <label class="field-label">Width ({{ project.unit }})</label>
-      <input
-        v-model.number="project.width"
-        class="input"
-        type="number"
-        min="0.1"
-        :step="step"
-        @input="markCustom"
-      />
+      <input v-model.number="project.width" class="input" type="number" min="0.1" :step="step" @input="markCustom" />
     </div>
 
     <div class="dim-group narrow">
       <label class="field-label">Height ({{ project.unit }})</label>
-      <input
-        v-model.number="project.height"
-        class="input"
-        type="number"
-        min="0.1"
-        :step="step"
-        @input="markCustom"
-      />
-    </div>
-
-    <div class="dim-readout">
-      <span>{{ cssWidth }} × {{ cssHeight }} px</span>
-      <span>{{ ptWidth }} × {{ ptHeight }} pt</span>
+      <input v-model.number="project.height" class="input" type="number" min="0.1" :step="step" @input="markCustom" />
     </div>
   </div>
 </template>

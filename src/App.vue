@@ -1,30 +1,18 @@
 <script setup>
-import { ref } from 'vue'
-import PageDesigner from './components/PageDesigner.vue'
-import PdfFormEditor from './components/PdfFormEditor.vue'
-import {
-  generatePdf,
-  downloadJson,
-  canSaveAs,
-  pickSaveFile,
-  writeBlobToHandle,
-  jsonBlob
-} from './api.js'
-import {
-  project,
-  newProject,
-  exportProject,
-  importProject
-} from './composables/useProject.js'
+import { ref } from "vue";
+import PageDesigner from "./components/PageDesigner.vue";
+import PdfFormEditor from "./components/PdfFormEditor.vue";
+import { generatePdf, downloadJson, canSaveAs, pickSaveFile, writeBlobToHandle, jsonBlob } from "./api.js";
+import { project, newProject, exportProject, importProject } from "./composables/useProject.js";
 
-const MAX_IMPORT_BYTES = 10 * 1024 * 1024
+const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 
-const step = ref('design')
-const pdfBytes = ref(null)
-const generating = ref(false)
-const error = ref('')
-const lastSignature = ref('')
-const fileInputRef = ref(null)
+const step = ref("design");
+const pdfBytes = ref(null);
+const generating = ref(false);
+const error = ref("");
+const lastSignature = ref("");
+const fileInputRef = ref(null);
 
 function currentSignature() {
   return JSON.stringify({
@@ -32,130 +20,128 @@ function currentSignature() {
     css: project.css,
     width: project.width,
     height: project.height,
-    unit: project.unit
-  })
+    unit: project.unit,
+  });
 }
 
 async function handleGenerate() {
-  error.value = ''
-  generating.value = true
+  error.value = "";
+  generating.value = true;
   try {
     pdfBytes.value = await generatePdf({
       pages: project.pages.map((page) => ({ html: page.html })),
       css: project.css,
       width: Number(project.width),
       height: Number(project.height),
-      unit: project.unit
-    })
-    lastSignature.value = currentSignature()
-    step.value = 'fields'
+      unit: project.unit,
+    });
+    lastSignature.value = currentSignature();
+    step.value = "fields";
   } catch (e) {
-    error.value = e.message
+    error.value = e.message;
   } finally {
-    generating.value = false
+    generating.value = false;
   }
 }
 
 async function goToFields() {
   if (!pdfBytes.value || currentSignature() !== lastSignature.value) {
-    await handleGenerate()
+    await handleGenerate();
   } else {
-    step.value = 'fields'
+    step.value = "fields";
   }
 }
 
 function handleNew() {
-  if (!confirm('Start a new project? This clears the saved draft in this browser.')) return
-  newProject()
-  pdfBytes.value = null
-  lastSignature.value = ''
-  error.value = ''
-  step.value = 'design'
+  if (!confirm("Start a new project? This clears the saved draft in this browser.")) return;
+  newProject();
+  pdfBytes.value = null;
+  lastSignature.value = "";
+  error.value = "";
+  step.value = "design";
 }
 
 async function handleExportJson() {
-  error.value = ''
-  const date = new Date().toISOString().slice(0, 10)
-  const filename = `pdf-maker-project-${date}.json`
-  let handle = null
-  let usePicker = canSaveAs()
+  error.value = "";
+  const date = new Date().toISOString().slice(0, 10);
+  const filename = `pdf-maker-project-${date}.json`;
+  let handle = null;
+  let usePicker = canSaveAs();
 
   if (usePicker) {
     try {
       handle = await pickSaveFile({
         suggestedName: filename,
-        description: 'PDF Maker project',
-        mimeType: 'application/json',
-        extension: '.json'
-      })
+        description: "PDF Maker project",
+        mimeType: "application/json",
+        extension: ".json",
+      });
     } catch {
-      usePicker = false
+      usePicker = false;
     }
-    if (usePicker && !handle) return
+    if (usePicker && !handle) return;
   }
 
   try {
-    const data = exportProject()
+    const data = exportProject();
     if (handle) {
-      await writeBlobToHandle(handle, jsonBlob(data))
+      await writeBlobToHandle(handle, jsonBlob(data));
     } else {
-      downloadJson(data, filename)
+      downloadJson(data, filename);
     }
   } catch (e) {
-    error.value = `Could not export project: ${e.message}`
+    error.value = `Could not export project: ${e.message}`;
   }
 }
 
 function triggerImport() {
-  if (generating.value) return
-  error.value = ''
-  fileInputRef.value?.click()
+  if (generating.value) return;
+  error.value = "";
+  fileInputRef.value?.click();
 }
 
 async function handleImportFile(event) {
-  const input = event.target
-  const file = input.files?.[0]
-  input.value = ''
-  if (!file) return
-  if (generating.value) return
+  const input = event.target;
+  const file = input.files?.[0];
+  input.value = "";
+  if (!file) return;
+  if (generating.value) return;
 
   if (file.size > MAX_IMPORT_BYTES) {
-    error.value = 'That file is too large (maximum is 10 MB).'
-    return
+    error.value = "That file is too large (maximum is 10 MB).";
+    return;
   }
 
-  let text
+  let text;
   try {
-    text = await file.text()
+    text = await file.text();
   } catch {
-    error.value = 'Could not read that file.'
-    return
+    error.value = "Could not read that file.";
+    return;
   }
 
-  let data
+  let data;
   try {
-    data = JSON.parse(text)
+    data = JSON.parse(text);
   } catch {
-    error.value = 'Could not import: the file is not valid JSON.'
-    return
+    error.value = "Could not import: the file is not valid JSON.";
+    return;
   }
 
   if (
-    !confirm(
-      'Import this project? This replaces your current project and saved draft. Only import files you trust.'
-    )
+    !confirm("Import this project? This replaces your current project and saved draft. Only import files you trust.")
   ) {
-    return
+    return;
   }
 
   try {
-    importProject(data)
-    pdfBytes.value = null
-    lastSignature.value = ''
-    error.value = ''
-    step.value = 'design'
+    importProject(data);
+    pdfBytes.value = null;
+    lastSignature.value = "";
+    error.value = "";
+    step.value = "design";
   } catch (e) {
-    error.value = `Could not import project: ${e.message}`
+    error.value = `Could not import project: ${e.message}`;
   }
 }
 </script>
@@ -168,56 +154,29 @@ async function handleImportFile(event) {
       </div>
 
       <nav class="steps">
-        <button
-          class="step"
-          :class="{ active: step === 'design' }"
-          @click="step = 'design'"
-        >
+        <button class="step" :class="{ active: step === 'design' }" @click="step = 'design'">
           <span class="step-num">1</span> Design pages
         </button>
         <span class="step-sep">→</span>
-        <button
-          class="step"
-          :class="{ active: step === 'fields' }"
-          @click="goToFields"
-        >
+        <button class="step" :class="{ active: step === 'fields' }" @click="goToFields">
           <span class="step-num">2</span> Place fields
         </button>
       </nav>
 
       <div class="header-actions">
-        <button class="btn btn-ghost" :disabled="generating" @click="triggerImport">
-          Import JSON
-        </button>
-        <button class="btn btn-ghost" @click="handleExportJson">Export JSON…</button>
-        <button class="btn btn-ghost" :disabled="generating" @click="handleNew">
-          New project
-        </button>
+        <button class="btn btn-ghost" :disabled="generating" @click="triggerImport">Import Template</button>
+        <button class="btn btn-ghost" @click="handleExportJson">Export Template</button>
+        <button class="btn btn-ghost" :disabled="generating" @click="handleNew">New project</button>
       </div>
 
-      <input
-        ref="fileInputRef"
-        type="file"
-        accept=".json,application/json"
-        hidden
-        @change="handleImportFile"
-      />
+      <input ref="fileInputRef" type="file" accept=".json,application/json" hidden @change="handleImportFile" />
     </header>
 
     <p v-if="error" class="app-error">{{ error }}</p>
 
     <main class="app-main">
-      <PageDesigner
-        v-if="step === 'design'"
-        :busy="generating"
-        @generate="handleGenerate"
-      />
-      <PdfFormEditor
-        v-else-if="pdfBytes"
-        :pdf-bytes="pdfBytes"
-        @back="step = 'design'"
-        @regenerate="handleGenerate"
-      />
+      <PageDesigner v-if="step === 'design'" :busy="generating" @generate="handleGenerate" />
+      <PdfFormEditor v-else-if="pdfBytes" :pdf-bytes="pdfBytes" @back="step = 'design'" />
     </main>
   </div>
 </template>

@@ -1,107 +1,97 @@
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import * as pdfjsLib from 'pdfjs-dist'
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import { project, removeFields } from '../composables/useProject.js'
-import {
-  generatePdf,
-  downloadPdf,
-  canSaveAs,
-  pickSaveFile,
-  writeBlobToHandle,
-  pdfBlob
-} from '../api.js'
-import { round } from '../utils/units.js'
-import ZoomControls from './ZoomControls.vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from "vue";
+import * as pdfjsLib from "pdfjs-dist";
+import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { project, removeFields } from "../composables/useProject.js";
+import { generatePdf, downloadPdf, canSaveAs, pickSaveFile, writeBlobToHandle, pdfBlob } from "../api.js";
+import { round } from "../utils/units.js";
+import ZoomControls from "./ZoomControls.vue";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
-const props = defineProps({ pdfBytes: { type: Object, default: null } })
-const emit = defineEmits(['back', 'regenerate'])
+const props = defineProps({ pdfBytes: { type: Object, default: null } });
 
-const stageRef = ref(null)
-const pageRef = ref(null)
-const canvasRef = ref(null)
+const stageRef = ref(null);
+const pageRef = ref(null);
+const canvasRef = ref(null);
 
-const pageWidthPt = ref(0)
-const pageHeightPt = ref(0)
+const pageWidthPt = ref(0);
+const pageHeightPt = ref(0);
 
-const zoomMode = ref('fit-page')
-const manualZoom = ref(1)
-const fitPageScale = ref(1)
-const fitWidthScale = ref(1)
+const zoomMode = ref("fit-page");
+const manualZoom = ref(1);
+const fitPageScale = ref(1);
+const fitWidthScale = ref(1);
 
 const viewScale = computed(() => {
-  if (zoomMode.value === 'manual') return manualZoom.value
-  if (zoomMode.value === 'fit-width') return fitWidthScale.value
-  return fitPageScale.value
-})
+  if (zoomMode.value === "manual") return manualZoom.value;
+  if (zoomMode.value === "fit-width") return fitWidthScale.value;
+  return fitPageScale.value;
+});
 
-const currentPageIndex = ref(0)
-const numPages = ref(0)
+const currentPageIndex = ref(0);
+const numPages = ref(0);
 
-const selectedIds = ref([])
-const marquee = ref(null)
-const pendingType = ref(null)
-const busy = ref(false)
-const error = ref('')
+const selectedIds = ref([]);
+const marquee = ref(null);
+const pendingType = ref(null);
+const busy = ref(false);
+const error = ref("");
 
-let pdfDoc = null
-let pdfPage = null
-let renderTask = null
-let pageLoadToken = 0
-let resizeObserver = null
-let resizeTimer = null
-let marqueeCleanup = null
+let pdfDoc = null;
+let pdfPage = null;
+let renderTask = null;
+let pageLoadToken = 0;
+let resizeObserver = null;
+let resizeTimer = null;
+let marqueeCleanup = null;
 
-const displayWidth = computed(() => pageWidthPt.value * viewScale.value)
-const displayHeight = computed(() => pageHeightPt.value * viewScale.value)
+const displayWidth = computed(() => pageWidthPt.value * viewScale.value);
+const displayHeight = computed(() => pageHeightPt.value * viewScale.value);
 
 const pageStyle = computed(() => ({
   width: `${displayWidth.value}px`,
   height: `${displayHeight.value}px`,
-  cursor: pendingType.value ? 'crosshair' : 'default'
-}))
+  cursor: pendingType.value ? "crosshair" : "default",
+}));
 
-const currentPage = computed(() => project.pages[currentPageIndex.value] ?? null)
+const currentPage = computed(() => project.pages[currentPageIndex.value] ?? null);
 
 const currentFields = computed(() => {
-  const pageId = currentPage.value?.id
-  if (!pageId) return []
-  return project.fields.filter((field) => field.pageId === pageId)
-})
+  const pageId = currentPage.value?.id;
+  if (!pageId) return [];
+  return project.fields.filter((field) => field.pageId === pageId);
+});
 
 const selectedField = computed(() => {
-  if (selectedIds.value.length !== 1) return null
-  return currentFields.value.find((field) => field.id === selectedIds.value[0]) ?? null
-})
+  if (selectedIds.value.length !== 1) return null;
+  return currentFields.value.find((field) => field.id === selectedIds.value[0]) ?? null;
+});
 
-const selectedFields = computed(() =>
-  currentFields.value.filter((field) => selectedIds.value.includes(field.id))
-)
+const selectedFields = computed(() => currentFields.value.filter((field) => selectedIds.value.includes(field.id)));
 
 function isSelected(id) {
-  return selectedIds.value.includes(id)
+  return selectedIds.value.includes(id);
 }
 
 function setSelection(ids) {
-  selectedIds.value = [...new Set(ids)]
+  selectedIds.value = [...new Set(ids)];
 }
 
 function selectOnly(id) {
-  setSelection(id ? [id] : [])
+  setSelection(id ? [id] : []);
 }
 
 function toggleSelection(id) {
   if (isSelected(id)) {
-    setSelection(selectedIds.value.filter((selected) => selected !== id))
+    setSelection(selectedIds.value.filter((selected) => selected !== id));
   } else {
-    setSelection([...selectedIds.value, id])
+    setSelection([...selectedIds.value, id]);
   }
 }
 
 function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max)
+  return Math.min(Math.max(value, min), max);
 }
 
 function getMoveBounds(items) {
@@ -109,273 +99,269 @@ function getMoveBounds(items) {
     minX: Math.max(...items.map((item) => -item.x)),
     maxX: Math.min(...items.map((item) => pageWidthPt.value - item.w - item.x)),
     minY: Math.max(...items.map((item) => -item.y)),
-    maxY: Math.min(...items.map((item) => pageHeightPt.value - item.h - item.y))
-  }
+    maxY: Math.min(...items.map((item) => pageHeightPt.value - item.h - item.y)),
+  };
 }
 
 function clampMove(dx, dy, bounds) {
   return {
     dx: clamp(dx, bounds.minX, bounds.maxX),
-    dy: clamp(dy, bounds.minY, bounds.maxY)
-  }
+    dy: clamp(dy, bounds.minY, bounds.maxY),
+  };
 }
 
 function fieldStyle(field) {
-  const scale = viewScale.value
+  const scale = viewScale.value;
   return {
     left: `${field.x * scale}px`,
     top: `${field.y * scale}px`,
     width: `${field.w * scale}px`,
-    height: `${field.h * scale}px`
-  }
+    height: `${field.h * scale}px`,
+  };
 }
 
 const marqueeStyle = computed(() => {
-  const current = marquee.value
-  if (!current) return {}
-  const scale = viewScale.value
+  const current = marquee.value;
+  if (!current) return {};
+  const scale = viewScale.value;
   return {
     left: `${Math.min(current.startX, current.currentX) * scale}px`,
     top: `${Math.min(current.startY, current.currentY) * scale}px`,
     width: `${Math.abs(current.currentX - current.startX) * scale}px`,
-    height: `${Math.abs(current.currentY - current.startY) * scale}px`
-  }
-})
+    height: `${Math.abs(current.currentY - current.startY) * scale}px`,
+  };
+});
 
 function computeScale() {
-  const el = stageRef.value
-  if (!el || !pageWidthPt.value) return
-  const padding = 72
-  const availableWidth = el.clientWidth - padding
-  const availableHeight = el.clientHeight - padding
-  if (availableWidth <= 0 || availableHeight <= 0) return
+  const el = stageRef.value;
+  if (!el || !pageWidthPt.value) return;
+  const padding = 72;
+  const availableWidth = el.clientWidth - padding;
+  const availableHeight = el.clientHeight - padding;
+  if (availableWidth <= 0 || availableHeight <= 0) return;
 
-  fitWidthScale.value = Math.min(availableWidth / pageWidthPt.value, 2)
-  fitPageScale.value = Math.min(
-    availableWidth / pageWidthPt.value,
-    availableHeight / pageHeightPt.value,
-    2
-  )
+  fitWidthScale.value = Math.min(availableWidth / pageWidthPt.value, 2);
+  fitPageScale.value = Math.min(availableWidth / pageWidthPt.value, availableHeight / pageHeightPt.value, 2);
 }
 
 function clampZoom(value) {
-  return clamp(value, 0.1, 3)
+  return clamp(value, 0.1, 3);
 }
 
 function captureZoomCenter() {
-  const stage = stageRef.value
-  const page = pageRef.value
-  if (!stage || !page) return null
-  const stageRect = stage.getBoundingClientRect()
-  const pageRect = page.getBoundingClientRect()
-  const pageLeft = pageRect.left - stageRect.left + stage.scrollLeft
-  const pageTop = pageRect.top - stageRect.top + stage.scrollTop
+  const stage = stageRef.value;
+  const page = pageRef.value;
+  if (!stage || !page) return null;
+  const stageRect = stage.getBoundingClientRect();
+  const pageRect = page.getBoundingClientRect();
+  const pageLeft = pageRect.left - stageRect.left + stage.scrollLeft;
+  const pageTop = pageRect.top - stageRect.top + stage.scrollTop;
   return {
     relX: (stage.scrollLeft + stage.clientWidth / 2 - pageLeft) / viewScale.value,
-    relY: (stage.scrollTop + stage.clientHeight / 2 - pageTop) / viewScale.value
-  }
+    relY: (stage.scrollTop + stage.clientHeight / 2 - pageTop) / viewScale.value,
+  };
 }
 
 function restoreZoomCenter(center) {
-  if (!center) return
+  if (!center) return;
   nextTick(() => {
-    const stage = stageRef.value
-    const page = pageRef.value
-    if (!stage || !page) return
-    const stageRect = stage.getBoundingClientRect()
-    const pageRect = page.getBoundingClientRect()
-    const pageLeft = pageRect.left - stageRect.left + stage.scrollLeft
-    const pageTop = pageRect.top - stageRect.top + stage.scrollTop
-    stage.scrollLeft = pageLeft + center.relX * viewScale.value - stage.clientWidth / 2
-    stage.scrollTop = pageTop + center.relY * viewScale.value - stage.clientHeight / 2
-  })
+    const stage = stageRef.value;
+    const page = pageRef.value;
+    if (!stage || !page) return;
+    const stageRect = stage.getBoundingClientRect();
+    const pageRect = page.getBoundingClientRect();
+    const pageLeft = pageRect.left - stageRect.left + stage.scrollLeft;
+    const pageTop = pageRect.top - stageRect.top + stage.scrollTop;
+    stage.scrollLeft = pageLeft + center.relX * viewScale.value - stage.clientWidth / 2;
+    stage.scrollTop = pageTop + center.relY * viewScale.value - stage.clientHeight / 2;
+  });
 }
 
 function stepZoom(delta) {
-  const center = captureZoomCenter()
-  manualZoom.value = clampZoom(Math.round((viewScale.value + delta) * 100) / 100)
-  zoomMode.value = 'manual'
-  restoreZoomCenter(center)
+  const center = captureZoomCenter();
+  manualZoom.value = clampZoom(Math.round((viewScale.value + delta) * 100) / 100);
+  zoomMode.value = "manual";
+  restoreZoomCenter(center);
 }
 
 function zoomIn() {
-  stepZoom(0.1)
+  stepZoom(0.1);
 }
 
 function zoomOut() {
-  stepZoom(-0.1)
+  stepZoom(-0.1);
 }
 
 function actualSize() {
-  const center = captureZoomCenter()
-  manualZoom.value = 1
-  zoomMode.value = 'manual'
-  restoreZoomCenter(center)
+  const center = captureZoomCenter();
+  manualZoom.value = 1;
+  zoomMode.value = "manual";
+  restoreZoomCenter(center);
 }
 
 function fitWidth() {
-  const center = captureZoomCenter()
-  zoomMode.value = 'fit-width'
-  restoreZoomCenter(center)
+  const center = captureZoomCenter();
+  zoomMode.value = "fit-width";
+  restoreZoomCenter(center);
 }
 
 function fitPage() {
-  const center = captureZoomCenter()
-  zoomMode.value = 'fit-page'
-  restoreZoomCenter(center)
+  const center = captureZoomCenter();
+  zoomMode.value = "fit-page";
+  restoreZoomCenter(center);
 }
 
 async function renderCanvas() {
-  if (!pdfPage || !canvasRef.value) return
+  if (!pdfPage || !canvasRef.value) return;
   if (renderTask) {
     try {
-      renderTask.cancel()
+      renderTask.cancel();
     } catch {
       // ignore
     }
-    renderTask = null
+    renderTask = null;
   }
 
-  const renderScale = Math.min(viewScale.value, 2)
-  const viewport = pdfPage.getViewport({ scale: renderScale })
-  const canvas = canvasRef.value
-  const dpr = window.devicePixelRatio || 1
+  const renderScale = Math.min(viewScale.value, 2);
+  const viewport = pdfPage.getViewport({ scale: renderScale });
+  const canvas = canvasRef.value;
+  const dpr = window.devicePixelRatio || 1;
 
-  canvas.width = Math.floor(viewport.width * dpr)
-  canvas.height = Math.floor(viewport.height * dpr)
+  canvas.width = Math.floor(viewport.width * dpr);
+  canvas.height = Math.floor(viewport.height * dpr);
 
   const task = pdfPage.render({
-    canvasContext: canvas.getContext('2d'),
+    canvasContext: canvas.getContext("2d"),
     viewport,
-    transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null
-  })
-  renderTask = task
+    transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : null,
+  });
+  renderTask = task;
 
   try {
-    await task.promise
+    await task.promise;
   } catch (err) {
-    if (err?.name !== 'RenderingCancelledException') {
-      console.warn('PDF render failed:', err)
+    if (err?.name !== "RenderingCancelledException") {
+      console.warn("PDF render failed:", err);
     }
   } finally {
-    if (renderTask === task) renderTask = null
+    if (renderTask === task) renderTask = null;
   }
 }
 
 async function loadPage(index) {
-  if (!pdfDoc || !numPages.value) return
+  if (!pdfDoc || !numPages.value) return;
 
-  const target = clamp(index, 0, numPages.value - 1)
-  const token = ++pageLoadToken
-  currentPageIndex.value = target
+  const target = clamp(index, 0, numPages.value - 1);
+  const token = ++pageLoadToken;
+  currentPageIndex.value = target;
 
   try {
-    const page = await pdfDoc.getPage(target + 1)
-    if (token !== pageLoadToken) return
+    const page = await pdfDoc.getPage(target + 1);
+    if (token !== pageLoadToken) return;
 
-    pdfPage = page
-    const viewport = page.getViewport({ scale: 1 })
-    pageWidthPt.value = viewport.width
-    pageHeightPt.value = viewport.height
-    computeScale()
-    await nextTick()
-    if (token !== pageLoadToken) return
-    await renderCanvas()
+    pdfPage = page;
+    const viewport = page.getViewport({ scale: 1 });
+    pageWidthPt.value = viewport.width;
+    pageHeightPt.value = viewport.height;
+    computeScale();
+    await nextTick();
+    if (token !== pageLoadToken) return;
+    await renderCanvas();
   } catch (err) {
     if (token === pageLoadToken) {
-      error.value = err?.message || 'Could not load this page'
+      error.value = err?.message || "Could not load this page";
     }
   }
 }
 
 async function loadDocument() {
-  if (!props.pdfBytes) return
-  error.value = ''
+  if (!props.pdfBytes) return;
+  error.value = "";
   try {
-    pdfDoc = await pdfjsLib.getDocument({ data: props.pdfBytes.slice() }).promise
-    numPages.value = pdfDoc.numPages
-    const target = clamp(currentPageIndex.value, 0, Math.max(0, numPages.value - 1))
-    await loadPage(target)
+    pdfDoc = await pdfjsLib.getDocument({ data: props.pdfBytes.slice() }).promise;
+    numPages.value = pdfDoc.numPages;
+    const target = clamp(currentPageIndex.value, 0, Math.max(0, numPages.value - 1));
+    await loadPage(target);
   } catch (err) {
-    error.value = err?.message || 'Could not load the generated PDF'
+    error.value = err?.message || "Could not load the generated PDF";
   }
 }
 
 async function goToPage(index) {
-  if (index === currentPageIndex.value) return
-  marqueeCleanup?.()
-  setSelection([])
-  pendingType.value = null
-  await loadPage(index)
+  if (index === currentPageIndex.value) return;
+  marqueeCleanup?.();
+  setSelection([]);
+  pendingType.value = null;
+  await loadPage(index);
 }
 
 function scheduleRerender() {
-  clearTimeout(resizeTimer)
+  clearTimeout(resizeTimer);
   resizeTimer = setTimeout(async () => {
-    if (!pdfPage) return
-    computeScale()
-    await renderCanvas()
-  }, 120)
+    if (!pdfPage) return;
+    computeScale();
+    await renderCanvas();
+  }, 120);
 }
 
 onMounted(async () => {
-  await nextTick()
-  await loadDocument()
-  resizeObserver = new ResizeObserver(scheduleRerender)
-  if (stageRef.value) resizeObserver.observe(stageRef.value)
-  window.addEventListener('keydown', onKeydown)
-})
+  await nextTick();
+  await loadDocument();
+  resizeObserver = new ResizeObserver(scheduleRerender);
+  if (stageRef.value) resizeObserver.observe(stageRef.value);
+  window.addEventListener("keydown", onKeydown);
+});
 
 onBeforeUnmount(() => {
-  resizeObserver?.disconnect()
-  clearTimeout(resizeTimer)
-  marqueeCleanup?.()
-  window.removeEventListener('keydown', onKeydown)
+  resizeObserver?.disconnect();
+  clearTimeout(resizeTimer);
+  marqueeCleanup?.();
+  window.removeEventListener("keydown", onKeydown);
   if (renderTask) {
     try {
-      renderTask.cancel()
+      renderTask.cancel();
     } catch {
       // ignore
     }
   }
-})
+});
 
 watch(
   () => props.pdfBytes,
   async () => {
-    pageLoadToken++
-    pdfDoc = null
-    pdfPage = null
-    await loadDocument()
+    pageLoadToken++;
+    pdfDoc = null;
+    pdfPage = null;
+    await loadDocument();
   }
-)
+);
 
 watch(viewScale, () => {
-  scheduleRerender()
-})
+  scheduleRerender();
+});
 
 function togglePending(type) {
-  pendingType.value = pendingType.value === type ? null : type
+  pendingType.value = pendingType.value === type ? null : type;
 }
 
 function onPagePointerDown(event) {
-  if (pendingType.value || event.button !== 0) return
-  if (event.target.closest?.('.field-box')) return
+  if (pendingType.value || event.button !== 0) return;
+  if (event.target.closest?.(".field-box")) return;
 
-  const page = pageRef.value
-  if (!page) return
+  const page = pageRef.value;
+  if (!page) return;
 
-  marqueeCleanup?.()
-  event.preventDefault()
+  marqueeCleanup?.();
+  event.preventDefault();
 
-  const rect = page.getBoundingClientRect()
-  const scale = viewScale.value
-  const startX = clamp((event.clientX - rect.left) / scale, 0, pageWidthPt.value)
-  const startY = clamp((event.clientY - rect.top) / scale, 0, pageHeightPt.value)
-  const additive = event.shiftKey || event.metaKey || event.ctrlKey
-  const baseSelection = additive ? selectedIds.value.slice() : []
+  const rect = page.getBoundingClientRect();
+  const scale = viewScale.value;
+  const startX = clamp((event.clientX - rect.left) / scale, 0, pageWidthPt.value);
+  const startY = clamp((event.clientY - rect.top) / scale, 0, pageHeightPt.value);
+  const additive = event.shiftKey || event.metaKey || event.ctrlKey;
+  const baseSelection = additive ? selectedIds.value.slice() : [];
 
-  if (!additive) setSelection([])
+  if (!additive) setSelection([]);
 
   marquee.value = {
     startX,
@@ -385,88 +371,69 @@ function onPagePointerDown(event) {
     startClientX: event.clientX,
     startClientY: event.clientY,
     additive,
-    baseSelection
-  }
+    baseSelection,
+  };
 
   const onMove = (moveEvent) => {
-    const current = marquee.value
-    if (!current) return
+    const current = marquee.value;
+    if (!current) return;
 
-    const currentRect = page.getBoundingClientRect()
-    const currentScale = viewScale.value
-    current.currentX = clamp(
-      (moveEvent.clientX - currentRect.left) / currentScale,
-      0,
-      pageWidthPt.value
-    )
-    current.currentY = clamp(
-      (moveEvent.clientY - currentRect.top) / currentScale,
-      0,
-      pageHeightPt.value
-    )
+    const currentRect = page.getBoundingClientRect();
+    const currentScale = viewScale.value;
+    current.currentX = clamp((moveEvent.clientX - currentRect.left) / currentScale, 0, pageWidthPt.value);
+    current.currentY = clamp((moveEvent.clientY - currentRect.top) / currentScale, 0, pageHeightPt.value);
 
-    const distance = Math.hypot(
-      moveEvent.clientX - current.startClientX,
-      moveEvent.clientY - current.startClientY
-    )
-    if (distance < 3) return
+    const distance = Math.hypot(moveEvent.clientX - current.startClientX, moveEvent.clientY - current.startClientY);
+    if (distance < 3) return;
 
-    const left = Math.min(current.startX, current.currentX)
-    const top = Math.min(current.startY, current.currentY)
-    const right = Math.max(current.startX, current.currentX)
-    const bottom = Math.max(current.startY, current.currentY)
+    const left = Math.min(current.startX, current.currentX);
+    const top = Math.min(current.startY, current.currentY);
+    const right = Math.max(current.startX, current.currentX);
+    const bottom = Math.max(current.startY, current.currentY);
     const hitIds = currentFields.value
-      .filter(
-        (field) =>
-          field.x < right &&
-          field.x + field.w > left &&
-          field.y < bottom &&
-          field.y + field.h > top
-      )
-      .map((field) => field.id)
+      .filter((field) => field.x < right && field.x + field.w > left && field.y < bottom && field.y + field.h > top)
+      .map((field) => field.id);
 
-    setSelection(current.additive ? [...current.baseSelection, ...hitIds] : hitIds)
-  }
+    setSelection(current.additive ? [...current.baseSelection, ...hitIds] : hitIds);
+  };
 
   function cleanup() {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', cleanup)
-    window.removeEventListener('pointercancel', cleanup)
-    if (marqueeCleanup === cleanup) marqueeCleanup = null
-    marquee.value = null
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", cleanup);
+    window.removeEventListener("pointercancel", cleanup);
+    if (marqueeCleanup === cleanup) marqueeCleanup = null;
+    marquee.value = null;
   }
 
-  marqueeCleanup = cleanup
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', cleanup)
-  window.addEventListener('pointercancel', cleanup)
+  marqueeCleanup = cleanup;
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", cleanup);
+  window.addEventListener("pointercancel", cleanup);
 }
 
 function onPageClick(event) {
-  if (!pendingType.value) return
+  if (!pendingType.value) return;
 
-  const page = currentPage.value
-  if (!page) return
+  const page = currentPage.value;
+  if (!page) return;
 
-  const rect = pageRef.value.getBoundingClientRect()
-  const cssX = event.clientX - rect.left
-  const cssY = event.clientY - rect.top
-  const scale = viewScale.value
+  const rect = pageRef.value.getBoundingClientRect();
+  const cssX = event.clientX - rect.left;
+  const cssY = event.clientY - rect.top;
+  const scale = viewScale.value;
 
-  const isCheckbox = pendingType.value === 'checkbox'
-  const defaults = project.fieldDefaults?.[pendingType.value] ?? {}
-  const maxCheckboxSize = Math.min(pageWidthPt.value, pageHeightPt.value)
+  const isCheckbox = pendingType.value === "checkbox";
+  const defaults = project.fieldDefaults?.[pendingType.value] ?? {};
+  const maxCheckboxSize = Math.min(pageWidthPt.value, pageHeightPt.value);
   const width = isCheckbox
     ? round(clamp(Number(defaults.size) || 14, 4, maxCheckboxSize))
-    : round(clamp(Number(defaults.width) || 160, 4, pageWidthPt.value))
-  const height = isCheckbox
-    ? width
-    : round(clamp(Number(defaults.height) || 20, 4, pageHeightPt.value))
+    : round(clamp(Number(defaults.width) || 160, 4, pageWidthPt.value));
+  const height = isCheckbox ? width : round(clamp(Number(defaults.height) || 20, 4, pageHeightPt.value));
 
-  const x = clamp(cssX / scale, 0, pageWidthPt.value - width)
-  const y = clamp(cssY / scale, 0, pageHeightPt.value - height)
+  const x = clamp(cssX / scale, 0, pageWidthPt.value - width);
+  const y = clamp(cssY / scale, 0, pageHeightPt.value - height);
 
-  const count = project.fields.filter((field) => field.type === pendingType.value).length + 1
+  const count = project.fields.filter((field) => field.type === pendingType.value).length + 1;
 
   const field = {
     id: crypto.randomUUID(),
@@ -477,243 +444,239 @@ function onPageClick(event) {
     w: width,
     h: height,
     name: `${pendingType.value}_${count}`,
-    defaultValue: '',
+    defaultValue: "",
     checked: false,
     required: false,
     fontSize: 10,
     multiline: false,
     border: false,
-    tooltip: ''
-  }
+    tooltip: "",
+  };
 
-  project.fields.push(field)
-  selectOnly(field.id)
-  pendingType.value = null
+  project.fields.push(field);
+  selectOnly(field.id);
+  pendingType.value = null;
 }
 
 function clampDefaultSize(type, dimension) {
-  const defaults = project.fieldDefaults[type]
-  if (!defaults) return
+  const defaults = project.fieldDefaults[type];
+  if (!defaults) return;
 
   const max =
-    dimension === 'width'
+    dimension === "width"
       ? pageWidthPt.value
-      : dimension === 'height'
-        ? pageHeightPt.value
-        : Math.min(pageWidthPt.value, pageHeightPt.value)
-  if (!max) return
+      : dimension === "height"
+      ? pageHeightPt.value
+      : Math.min(pageWidthPt.value, pageHeightPt.value);
+  if (!max) return;
 
-  const fallback = dimension === 'width' ? 160 : dimension === 'height' ? 20 : 14
-  const raw = defaults[dimension]
-  const numeric = Number(raw)
-  const value = raw === '' || raw == null || !Number.isFinite(numeric) ? fallback : numeric
-  defaults[dimension] = round(clamp(value, 4, max))
+  const fallback = dimension === "width" ? 160 : dimension === "height" ? 20 : 14;
+  const raw = defaults[dimension];
+  const numeric = Number(raw);
+  const value = raw === "" || raw == null || !Number.isFinite(numeric) ? fallback : numeric;
+  defaults[dimension] = round(clamp(value, 4, max));
 }
 
 function setFieldDimension(dimension, rawValue) {
-  const field = selectedField.value
-  if (!field) return
+  const field = selectedField.value;
+  if (!field) return;
 
-  const isWidth = dimension === 'w'
-  const pageSize = isWidth ? pageWidthPt.value : pageHeightPt.value
-  if (!pageSize) return
+  const isWidth = dimension === "w";
+  const pageSize = isWidth ? pageWidthPt.value : pageHeightPt.value;
+  if (!pageSize) return;
 
-  const position = isWidth ? 'x' : 'y'
-  const fallback = field.type === 'checkbox' ? 14 : isWidth ? 160 : 20
-  const numeric = Number(rawValue)
-  const value = rawValue === '' || rawValue == null || !Number.isFinite(numeric) ? fallback : numeric
+  const position = isWidth ? "x" : "y";
+  const fallback = field.type === "checkbox" ? 14 : isWidth ? 160 : 20;
+  const numeric = Number(rawValue);
+  const value = rawValue === "" || rawValue == null || !Number.isFinite(numeric) ? fallback : numeric;
 
-  field[position] = round(clamp(field[position], 0, Math.max(0, pageSize - 4)))
-  field[dimension] = round(clamp(value, 4, pageSize - field[position]))
+  field[position] = round(clamp(field[position], 0, Math.max(0, pageSize - 4)));
+  field[dimension] = round(clamp(value, 4, pageSize - field[position]));
 }
 
 function onFieldPointerDown(event, field) {
-  if (event.button !== 0) return
-  event.preventDefault()
+  if (event.button !== 0) return;
+  event.preventDefault();
 
   if (event.shiftKey || event.metaKey || event.ctrlKey) {
-    toggleSelection(field.id)
-    return
+    toggleSelection(field.id);
+    return;
   }
 
-  if (!isSelected(field.id)) selectOnly(field.id)
+  if (!isSelected(field.id)) selectOnly(field.id);
 
-  const fields = selectedFields.value
-  if (!fields.length) return
+  const fields = selectedFields.value;
+  if (!fields.length) return;
 
-  const startX = event.clientX
-  const startY = event.clientY
-  const scale = viewScale.value
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const scale = viewScale.value;
   const origins = fields.map((item) => ({
     field: item,
     x: item.x,
     y: item.y,
     w: item.w,
-    h: item.h
-  }))
-  const bounds = getMoveBounds(origins)
+    h: item.h,
+  }));
+  const bounds = getMoveBounds(origins);
 
   const onMove = (moveEvent) => {
-    const dx = (moveEvent.clientX - startX) / scale
-    const dy = (moveEvent.clientY - startY) / scale
-    const clamped = clampMove(dx, dy, bounds)
+    const dx = (moveEvent.clientX - startX) / scale;
+    const dy = (moveEvent.clientY - startY) / scale;
+    const clamped = clampMove(dx, dy, bounds);
     for (const origin of origins) {
-      origin.field.x = round(
-        clamp(origin.x + clamped.dx, 0, pageWidthPt.value - origin.w)
-      )
-      origin.field.y = round(
-        clamp(origin.y + clamped.dy, 0, pageHeightPt.value - origin.h)
-      )
+      origin.field.x = round(clamp(origin.x + clamped.dx, 0, pageWidthPt.value - origin.w));
+      origin.field.y = round(clamp(origin.y + clamped.dy, 0, pageHeightPt.value - origin.h));
     }
-  }
+  };
 
   const onUp = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-    window.removeEventListener('pointercancel', onUp)
-  }
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+    window.removeEventListener("pointercancel", onUp);
+  };
 
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
-  window.addEventListener('pointercancel', onUp)
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
 }
 
 function onFieldClick() {}
 
 function onResizePointerDown(event, field) {
-  if (event.button !== 0) return
-  event.preventDefault()
-  event.stopPropagation()
-  selectOnly(field.id)
+  if (event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+  selectOnly(field.id);
 
-  const startX = event.clientX
-  const startY = event.clientY
-  const originW = field.w
-  const originH = field.h
-  const scale = viewScale.value
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const originW = field.w;
+  const originH = field.h;
+  const scale = viewScale.value;
 
   const onMove = (moveEvent) => {
-    const dw = (moveEvent.clientX - startX) / scale
-    const dh = (moveEvent.clientY - startY) / scale
-    field.w = round(clamp(originW + dw, 8, pageWidthPt.value - field.x))
-    field.h = round(clamp(originH + dh, 8, pageHeightPt.value - field.y))
-  }
+    const dw = (moveEvent.clientX - startX) / scale;
+    const dh = (moveEvent.clientY - startY) / scale;
+    field.w = round(clamp(originW + dw, 8, pageWidthPt.value - field.x));
+    field.h = round(clamp(originH + dh, 8, pageHeightPt.value - field.y));
+  };
 
   const onUp = () => {
-    window.removeEventListener('pointermove', onMove)
-    window.removeEventListener('pointerup', onUp)
-  }
+    window.removeEventListener("pointermove", onMove);
+    window.removeEventListener("pointerup", onUp);
+  };
 
-  window.addEventListener('pointermove', onMove)
-  window.addEventListener('pointerup', onUp)
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
 }
 
 const ARROW_DELTAS = {
   ArrowLeft: [-1, 0],
   ArrowRight: [1, 0],
   ArrowUp: [0, 1],
-  ArrowDown: [0, -1]
-}
+  ArrowDown: [0, -1],
+};
 
 function onKeydown(event) {
-  const tag = document.activeElement?.tagName
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+  const tag = document.activeElement?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
-  if (event.key === 'Escape') {
-    if (!selectedIds.value.length) return
-    event.preventDefault()
-    setSelection([])
-    return
+  if (event.key === "Escape") {
+    if (!selectedIds.value.length) return;
+    event.preventDefault();
+    setSelection([]);
+    return;
   }
 
-  if (event.key === 'Delete' || event.key === 'Backspace') {
-    if (!selectedIds.value.length) return
-    event.preventDefault()
-    removeSelected()
-    return
+  if (event.key === "Delete" || event.key === "Backspace") {
+    if (!selectedIds.value.length) return;
+    event.preventDefault();
+    removeSelected();
+    return;
   }
 
-  const delta = ARROW_DELTAS[event.key]
-  if (!delta || !selectedFields.value.length) return
-  if (event.metaKey || event.altKey) return
+  const delta = ARROW_DELTAS[event.key];
+  if (!delta || !selectedFields.value.length) return;
+  if (event.metaKey || event.altKey) return;
 
-  event.preventDefault()
-  const step = event.shiftKey ? 10 : 1
+  event.preventDefault();
+  const step = event.shiftKey ? 10 : 1;
 
   if (event.ctrlKey) {
-    const field = selectedField.value
-    if (!field) return
-    const maxH = pageHeightPt.value - field.y
+    const field = selectedField.value;
+    if (!field) return;
+    const maxH = pageHeightPt.value - field.y;
     if (delta[0] === 1) {
-      field.w = round(clamp(field.w + step, 8, pageWidthPt.value - field.x))
+      field.w = round(clamp(field.w + step, 8, pageWidthPt.value - field.x));
     } else if (delta[0] === -1) {
-      field.w = round(clamp(field.w - step, 8, pageWidthPt.value - field.x))
+      field.w = round(clamp(field.w - step, 8, pageWidthPt.value - field.x));
     }
     if (delta[1] === -1) {
-      field.h = round(clamp(field.h + step, 8, maxH))
+      field.h = round(clamp(field.h + step, 8, maxH));
     } else if (delta[1] === 1) {
-      field.h = round(clamp(field.h - step, 8, maxH))
+      field.h = round(clamp(field.h - step, 8, maxH));
     }
-    return
+    return;
   }
 
-  const fields = selectedFields.value
-  const bounds = getMoveBounds(fields)
-  const clamped = clampMove(delta[0] * step, -delta[1] * step, bounds)
+  const fields = selectedFields.value;
+  const bounds = getMoveBounds(fields);
+  const clamped = clampMove(delta[0] * step, -delta[1] * step, bounds);
   for (const field of fields) {
-    field.x = round(field.x + clamped.dx)
-    field.y = round(field.y + clamped.dy)
+    field.x = round(field.x + clamped.dx);
+    field.y = round(field.y + clamped.dy);
   }
 }
 
 function removeSelected() {
-  if (!selectedIds.value.length) return
-  removeFields(selectedIds.value)
-  setSelection([])
+  if (!selectedIds.value.length) return;
+  removeFields(selectedIds.value);
+  setSelection([]);
 }
 
 async function onExport() {
-  error.value = ''
-  let handle = null
-  let usePicker = canSaveAs()
+  error.value = "";
+  let handle = null;
+  let usePicker = canSaveAs();
 
   if (usePicker) {
     try {
       handle = await pickSaveFile({
-        suggestedName: 'form.pdf',
-        description: 'PDF document',
-        mimeType: 'application/pdf',
-        extension: '.pdf'
-      })
+        suggestedName: "form.pdf",
+        description: "PDF document",
+        mimeType: "application/pdf",
+        extension: ".pdf",
+      });
     } catch {
-      usePicker = false
+      usePicker = false;
     }
-    if (usePicker && !handle) return
+    if (usePicker && !handle) return;
   }
 
-  busy.value = true
+  busy.value = true;
   try {
     const fields = project.fields.map((field) => {
-      const index = project.pages.findIndex((page) => page.id === field.pageId)
-      return { ...field, page: index === -1 ? 0 : index }
-    })
+      const index = project.pages.findIndex((page) => page.id === field.pageId);
+      return { ...field, page: index === -1 ? 0 : index };
+    });
     const bytes = await generatePdf({
       pages: project.pages.map((page) => ({ html: page.html })),
       css: project.css,
       width: Number(project.width),
       height: Number(project.height),
       unit: project.unit,
-      fields
-    })
+      fields,
+    });
     if (handle) {
-      await writeBlobToHandle(handle, pdfBlob(bytes))
+      await writeBlobToHandle(handle, pdfBlob(bytes));
     } else {
-      downloadPdf(bytes, 'form.pdf')
+      downloadPdf(bytes, "form.pdf");
     }
   } catch (err) {
-    error.value = err?.message || 'Export failed'
+    error.value = err?.message || "Export failed";
   } finally {
-    busy.value = false
+    busy.value = false;
   }
 }
 </script>
@@ -721,21 +684,11 @@ async function onExport() {
 <template>
   <section class="form-editor">
     <header class="editor-bar">
-      <button class="btn btn-ghost" @click="emit('back')">← Design</button>
-
       <div class="tool-group">
-        <button
-          class="btn"
-          :class="{ 'is-active': pendingType === 'text' }"
-          @click="togglePending('text')"
-        >
+        <button class="btn" :class="{ 'is-active': pendingType === 'text' }" @click="togglePending('text')">
           + Text field
         </button>
-        <button
-          class="btn"
-          :class="{ 'is-active': pendingType === 'checkbox' }"
-          @click="togglePending('checkbox')"
-        >
+        <button class="btn" :class="{ 'is-active': pendingType === 'checkbox' }" @click="togglePending('checkbox')">
           + Checkbox
         </button>
       </div>
@@ -768,7 +721,7 @@ async function onExport() {
 
       <span v-if="pendingType" class="place-hint">
         Click page {{ currentPageIndex + 1 }} to place a
-        {{ pendingType === 'checkbox' ? 'checkbox' : 'text field' }}
+        {{ pendingType === "checkbox" ? "checkbox" : "text field" }}
       </span>
       <span v-else class="place-hint">
         {{ currentFields.length }} field(s) on this page · {{ project.fields.length }} total
@@ -788,25 +741,15 @@ async function onExport() {
         @fit-width="fitWidth"
         @fit-page="fitPage"
       />
-
-      <button class="btn btn-ghost" :disabled="busy" @click="emit('regenerate')">
-        Regenerate
-      </button>
       <button class="btn btn-primary" :disabled="busy" @click="onExport">
         <span v-if="busy" class="spinner"></span>
-        <span>{{ busy ? 'Exporting…' : 'Export PDF…' }}</span>
+        <span>{{ busy ? "Exporting…" : "Export PDF" }}</span>
       </button>
     </header>
 
     <div class="editor-body">
       <div ref="stageRef" class="stage">
-        <div
-          ref="pageRef"
-          class="page"
-          :style="pageStyle"
-          @click="onPageClick"
-          @pointerdown="onPagePointerDown"
-        >
+        <div ref="pageRef" class="page" :style="pageStyle" @click="onPageClick" @pointerdown="onPagePointerDown">
           <canvas ref="canvasRef" class="pdf-canvas"></canvas>
           <div class="overlay">
             <div
@@ -815,7 +758,7 @@ async function onExport() {
               class="field-box"
               :class="{
                 selected: isSelected(field.id),
-                'is-checkbox': field.type === 'checkbox'
+                'is-checkbox': field.type === 'checkbox',
               }"
               :style="fieldStyle(field)"
               @pointerdown.stop="onFieldPointerDown($event, field)"
@@ -840,7 +783,7 @@ async function onExport() {
           <div class="prop">
             <span class="field-label">Type</span>
             <span class="type-pill">
-              {{ selectedField.type === 'checkbox' ? 'Checkbox' : 'Text field' }}
+              {{ selectedField.type === "checkbox" ? "Checkbox" : "Text field" }}
             </span>
           </div>
 
@@ -885,33 +828,19 @@ async function onExport() {
             <div class="prop-row">
               <div class="prop">
                 <label class="field-label">Font size</label>
-                <input
-                  v-model.number="selectedField.fontSize"
-                  class="input"
-                  type="number"
-                  min="4"
-                  max="48"
-                />
+                <input v-model.number="selectedField.fontSize" class="input" type="number" min="4" max="48" />
               </div>
-              <label class="check">
-                <input v-model="selectedField.multiline" type="checkbox" /> Multiline
-              </label>
+              <label class="check"> <input v-model="selectedField.multiline" type="checkbox" /> Multiline </label>
             </div>
 
-            <label class="check">
-              <input v-model="selectedField.border" type="checkbox" /> Show border
-            </label>
+            <label class="check"> <input v-model="selectedField.border" type="checkbox" /> Show border </label>
           </template>
 
           <template v-else>
-            <label class="check">
-              <input v-model="selectedField.checked" type="checkbox" /> Checked by default
-            </label>
+            <label class="check"> <input v-model="selectedField.checked" type="checkbox" /> Checked by default </label>
           </template>
 
-          <label class="check">
-            <input v-model="selectedField.required" type="checkbox" /> Required
-          </label>
+          <label class="check"> <input v-model="selectedField.required" type="checkbox" /> Required </label>
 
           <div class="prop">
             <label class="field-label">Tooltip</label>
@@ -932,7 +861,8 @@ async function onExport() {
             <span class="type-pill">{{ selectedIds.length }} fields selected</span>
           </div>
           <p class="muted">
-            Drag any selected field to move the group. Shift-click or Ctrl/Cmd-click to add or remove fields, or drag a box on the page.
+            Drag any selected field to move the group. Shift-click or Ctrl/Cmd-click to add or remove fields, or drag a
+            box on the page.
           </p>
           <div class="prop-actions">
             <span class="coords">Fields move together</span>
@@ -943,10 +873,12 @@ async function onExport() {
         <div v-else class="props-empty">
           <p>Select a field to edit it, or add one from the toolbar.</p>
           <p class="muted">
-            Drag to move, nudge with the arrow keys, Ctrl+arrow to resize (Shift for 10pt), or use the corner handle. Press Delete to remove.
+            Drag to move, nudge with the arrow keys, Ctrl+arrow to resize (Shift for 10pt), or use the corner handle.
+            Press Delete to remove.
           </p>
           <p class="muted">
-            Shift-click or Ctrl/Cmd-click to select multiple fields, or drag a box on the page. Drag any selected field to move the group.
+            Shift-click or Ctrl/Cmd-click to select multiple fields, or drag a box on the page. Drag any selected field
+            to move the group.
           </p>
         </div>
 
